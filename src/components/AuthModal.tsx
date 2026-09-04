@@ -53,8 +53,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         body: JSON.stringify({ email, password, name })
       });
 
-      const data = await res.json();
-      if (res.ok) {
+      const contentType = res.headers.get('content-type') || '';
+      const data = (res.ok && contentType.includes('application/json')) 
+        ? await res.json() 
+        : (contentType.includes('application/json') ? await res.json() : null);
+
+      if (res.ok && data) {
         if (mode === 'forgot') {
           setMessage('Password reset instructions dispatched to your email.');
         } else {
@@ -62,7 +66,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           onClose();
         }
       } else {
-        setMessage(data.error || 'Authentication failed');
+        setMessage((data && data.error) || 'Authentication failed');
       }
     } catch (err: any) {
       setMessage('Network error communicating with authentication gateway.');
@@ -79,8 +83,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: ownerEmail, password: 'MasterOwnerPassword123' })
       });
-      const data = await res.json();
-      if (res.ok) {
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
         onLoginSuccess(data.user);
         onClose();
       }

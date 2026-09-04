@@ -33,14 +33,15 @@ export const PricingModal: React.FC<PricingModalProps> = ({
     setMessage(null);
     try {
       const res = await fetch('/api/subscriptions/upgrade', { method: 'POST' });
-      const data = await res.json();
-      if (res.ok) {
+      const contentType = res.headers.get('content-type') || '';
+      const data = contentType.includes('application/json') ? await res.json() : null;
+      if (res.ok && data) {
         setMessage(data.message || 'Successfully upgraded to Pro!');
         if (data.user) {
           onPlanUpdated(data.user);
         }
       } else {
-        setMessage(data.error || 'Failed to update plan');
+        setMessage((data && data.error) || 'Failed to update plan');
       }
     } catch (err) {
       setMessage('Network error communicating with billing gateway.');

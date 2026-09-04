@@ -102,7 +102,8 @@ class SpeechService {
   public speak(
     text: string, 
     onStart?: () => void, 
-    onEnd?: () => void
+    onEnd?: () => void,
+    lang?: string
   ): void {
     if (!this.isSynthesisSupported()) {
       onEnd?.();
@@ -128,16 +129,26 @@ class SpeechService {
     utterance.rate = 1.05;
     utterance.pitch = 1.0;
 
-    // Pick best futuristic sounding or natural voice if available
     const voices = window.speechSynthesis.getVoices();
-    const preferredVoice = voices.find(v => 
-      v.name.includes('Google') || 
-      v.name.includes('Natural') || 
-      v.name.includes('Samantha') || 
-      v.name.includes('Victoria')
-    );
-    if (preferredVoice) {
-      utterance.voice = preferredVoice;
+    const isHindi = lang === 'hi' || /[\u0900-\u097F]/.test(plainText);
+
+    if (isHindi) {
+      utterance.lang = 'hi-IN';
+      const hiVoice = voices.find(v => v.lang.startsWith('hi') || v.name.includes('Hindi') || v.name.includes('India'));
+      if (hiVoice) {
+        utterance.voice = hiVoice;
+      }
+    } else {
+      // Pick best futuristic sounding or natural voice if available
+      const preferredVoice = voices.find(v => 
+        v.name.includes('Google') || 
+        v.name.includes('Natural') || 
+        v.name.includes('Samantha') || 
+        v.name.includes('Victoria')
+      );
+      if (preferredVoice) {
+        utterance.voice = preferredVoice;
+      }
     }
 
     utterance.onstart = () => {

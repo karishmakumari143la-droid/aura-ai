@@ -21,8 +21,11 @@ export const AutomationsView: React.FC = () => {
   const fetchAutomations = async () => {
     try {
       const res = await fetch('/api/automations');
-      const data = await res.json();
-      setAutomations(data.automations || []);
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        setAutomations(data.automations || []);
+      }
     } catch (err) {
       console.error(err);
     } finally {
@@ -38,8 +41,9 @@ export const AutomationsView: React.FC = () => {
     setRunningId(id);
     try {
       const res = await fetch(`/api/automations/${id}/run`, { method: 'POST' });
-      const data = await res.json();
-      if (res.ok) {
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        await res.json();
         fetchAutomations();
       }
     } catch (err) {

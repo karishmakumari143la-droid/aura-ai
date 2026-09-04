@@ -44,12 +44,15 @@ export const AuraFace: React.FC<AuraFaceProps> = ({
   // Expression parameters based on state
   const isThinking = state === 'THINKING' || state === 'PLANNING';
   const isListening = state === 'LISTENING';
-  const isExecuting = state === 'EXECUTING' || state === 'COMMUNICATING';
+  const isExecuting = state === 'EXECUTING' || state === 'WORKING' || state === 'COMMUNICATING';
   const isSuccess = state === 'SUCCESS';
   const isError = state === 'ERROR';
+  const isEmpathy = state === 'EMPATHY';
+  const isLearning = state === 'LEARNING';
+  const isSpeaking = state === 'SPEAKING';
 
   // Eye dimensions
-  const eyeHeight = blink ? 1.5 : isListening ? 14 : isExecuting ? 11 : isSuccess ? 8 : 10;
+  const eyeHeight = blink ? 1.5 : isListening ? 14 : isExecuting ? 11 : (isSuccess || isEmpathy) ? 8 : 10;
   const eyeWidth = 7;
   const eyeRadius = blink ? 1 : 4.5;
 
@@ -58,12 +61,16 @@ export const AuraFace: React.FC<AuraFaceProps> = ({
                        isSuccess ? '#34D399' : 
                        isListening ? '#2DD4BF' : 
                        isThinking ? '#A855F7' : 
+                       isEmpathy ? '#FB7185' :
+                       isLearning ? '#F59E0B' :
                        '#38BDF8';
 
   const glowFilter = isError ? 'drop-shadow(0 0 8px rgba(244, 63, 94, 0.8))' :
                      isSuccess ? 'drop-shadow(0 0 8px rgba(52, 211, 153, 0.8))' :
                      isListening ? 'drop-shadow(0 0 10px rgba(45, 212, 191, 0.9))' :
                      isThinking ? 'drop-shadow(0 0 10px rgba(168, 85, 247, 0.9))' :
+                     isEmpathy ? 'drop-shadow(0 0 10px rgba(251, 113, 133, 0.85))' :
+                     isLearning ? 'drop-shadow(0 0 10px rgba(245, 158, 11, 0.85))' :
                      'drop-shadow(0 0 8px rgba(56, 189, 248, 0.75))';
 
   // Mouth waveform dynamic height based on audio
@@ -148,6 +155,15 @@ export const AuraFace: React.FC<AuraFaceProps> = ({
             fill="none"
             stroke={primaryColor}
             strokeWidth="2.4"
+            strokeLinecap="round"
+          />
+        ) : isEmpathy ? (
+          // Soft comforting smile curve
+          <path
+            d="M 41 64 Q 50 69 59 64"
+            fill="none"
+            stroke={primaryColor}
+            strokeWidth="2.2"
             strokeLinecap="round"
           />
         ) : isError ? (

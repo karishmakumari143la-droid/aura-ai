@@ -78,12 +78,15 @@ export const MemoryManager: React.FC<MemoryManagerProps> = ({
     setIsLoading(true);
     try {
       const res = await fetch('/api/memory');
-      const data = await res.json();
-      if (data.memories) {
-        setInternalMemories(data.memories);
-      }
-      if (data.proposals) {
-        setInternalProposals(data.proposals);
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        if (data.memories) {
+          setInternalMemories(data.memories);
+        }
+        if (data.proposals) {
+          setInternalProposals(data.proposals);
+        }
       }
     } catch (err) {
       console.error('Failed to fetch memories:', err);
@@ -123,9 +126,12 @@ export const MemoryManager: React.FC<MemoryManagerProps> = ({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
-        const data = await res.json();
-        if (data.memory) {
-          setInternalMemories(prev => [data.memory, ...prev]);
+        const contentType = res.headers.get('content-type') || '';
+        if (res.ok && contentType.includes('application/json')) {
+          const data = await res.json();
+          if (data.memory) {
+            setInternalMemories(prev => [data.memory, ...prev]);
+          }
         }
       } catch (err) {
         console.error('Failed to create memory:', err);
@@ -156,9 +162,12 @@ export const MemoryManager: React.FC<MemoryManagerProps> = ({
     } else {
       try {
         const res = await fetch(`/api/memory/proposals/${id}/approve`, { method: 'POST' });
-        const data = await res.json();
-        if (data.memory) {
-          setInternalMemories(prev => [data.memory, ...prev]);
+        const contentType = res.headers.get('content-type') || '';
+        if (res.ok && contentType.includes('application/json')) {
+          const data = await res.json();
+          if (data.memory) {
+            setInternalMemories(prev => [data.memory, ...prev]);
+          }
         }
         setInternalProposals(prev => prev.filter(p => p.id !== id));
       } catch (err) {

@@ -61,9 +61,17 @@ export const AuraCore: React.FC<AuraCoreProps> = ({
       icon: Mic,
       iconColor: 'text-teal-300'
     },
+    UNDERSTANDING: {
+      title: 'Understanding Intent',
+      desc: 'Analyzing linguistic and emotional context',
+      glow: 'from-sky-400/45 via-cyan-500/30 to-transparent',
+      borderColor: 'border-sky-400/60',
+      icon: Brain,
+      iconColor: 'text-sky-300'
+    },
     THINKING: {
       title: 'Thinking & Synthesizing',
-      desc: 'Formulating intent and retrieval context',
+      desc: 'Formulating strategy and retrieving context',
       glow: 'from-purple-500/40 via-indigo-600/30 to-transparent',
       borderColor: 'border-purple-400/60',
       icon: Brain,
@@ -76,6 +84,22 @@ export const AuraCore: React.FC<AuraCoreProps> = ({
       borderColor: 'border-cyan-400/70',
       icon: Cpu,
       iconColor: 'text-cyan-300'
+    },
+    SPEAKING: {
+      title: 'Speaking',
+      desc: 'Vocalizing natural synthesized response',
+      glow: 'from-cyan-400/50 via-teal-500/30 to-transparent',
+      borderColor: 'border-cyan-300/80',
+      icon: Volume2,
+      iconColor: 'text-cyan-200'
+    },
+    WORKING: {
+      title: 'Executing Work',
+      desc: 'Specialist agents running parallel tasks',
+      glow: 'from-blue-500/45 via-cyan-500/35 to-transparent',
+      borderColor: 'border-cyan-300/80',
+      icon: Cpu,
+      iconColor: 'text-cyan-200'
     },
     EXECUTING: {
       title: 'Executing Autonomous Work',
@@ -92,6 +116,22 @@ export const AuraCore: React.FC<AuraCoreProps> = ({
       borderColor: 'border-sky-400/70',
       icon: Volume2,
       iconColor: 'text-sky-300'
+    },
+    LEARNING: {
+      title: 'Evolving Preference Memory',
+      desc: 'Extracting repeated pattern for memory proposal',
+      glow: 'from-amber-400/40 via-purple-500/25 to-transparent',
+      borderColor: 'border-amber-400/60',
+      icon: Sparkles,
+      iconColor: 'text-amber-300'
+    },
+    EMPATHY: {
+      title: 'Active Emotional Support',
+      desc: 'Present, listening, and breaking stress into steps',
+      glow: 'from-rose-400/45 via-amber-500/30 to-transparent',
+      borderColor: 'border-rose-400/70',
+      icon: Sparkles,
+      iconColor: 'text-rose-300'
     },
     VERIFYING: {
       title: 'Compliance & Verification',
@@ -116,8 +156,23 @@ export const AuraCore: React.FC<AuraCoreProps> = ({
       borderColor: 'border-rose-500/80',
       icon: AlertCircle,
       iconColor: 'text-rose-400'
+    },
+    WAITING: {
+      title: 'Standing By',
+      desc: 'Awaiting your confirmation or clearance',
+      glow: 'from-cyan-500/25 via-slate-600/20 to-transparent',
+      borderColor: 'border-cyan-500/30',
+      icon: Sparkles,
+      iconColor: 'text-cyan-400'
     }
-  }[state];
+  }[state] || {
+    title: 'AURA Online',
+    desc: 'Intelligent AI Partner Ready',
+    glow: 'from-cyan-500/30 via-blue-600/20 to-transparent',
+    borderColor: 'border-cyan-500/40',
+    icon: Sparkles,
+    iconColor: 'text-cyan-400'
+  };
 
   const Icon = stateMeta.icon;
 

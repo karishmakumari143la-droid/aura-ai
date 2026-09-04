@@ -98,12 +98,15 @@ export default function App() {
   const fetchSession = async () => {
     try {
       const res = await fetch('/api/auth/me');
-      const data = await res.json();
-      if (data.user) {
-        setCurrentUser(data.user);
-      }
-      if (data.ownerEmail) {
-        setOwnerEmail(data.ownerEmail);
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        if (data.user) {
+          setCurrentUser(data.user);
+        }
+        if (data.ownerEmail) {
+          setOwnerEmail(data.ownerEmail);
+        }
       }
     } catch (err) {
       console.error('Failed to fetch auth session:', err);
@@ -113,11 +116,14 @@ export default function App() {
   const fetchTasks = async () => {
     try {
       const res = await fetch('/api/tasks');
-      const data = await res.json();
-      if (data.tasks) {
-        setTasksList(data.tasks);
-        if (data.tasks.length > 0 && !currentTask) {
-          setCurrentTask(data.tasks[0]);
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        if (data.tasks) {
+          setTasksList(data.tasks);
+          if (data.tasks.length > 0 && !currentTask) {
+            setCurrentTask(data.tasks[0]);
+          }
         }
       }
     } catch (err) {
@@ -128,11 +134,14 @@ export default function App() {
   const fetchWebsites = async () => {
     try {
       const res = await fetch('/api/websites');
-      const data = await res.json();
-      if (data.websites) {
-        setWebsitesList(data.websites);
-        if (data.websites.length > 0 && !activeWebsite) {
-          setActiveWebsite(data.websites[0]);
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        if (data.websites) {
+          setWebsitesList(data.websites);
+          if (data.websites.length > 0 && !activeWebsite) {
+            setActiveWebsite(data.websites[0]);
+          }
         }
       }
     } catch (err) {
@@ -143,9 +152,12 @@ export default function App() {
   const fetchAgents = async () => {
     try {
       const res = await fetch('/api/agents');
-      const data = await res.json();
-      if (data.agents) {
-        setAgents(data.agents);
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        if (data.agents) {
+          setAgents(data.agents);
+        }
       }
     } catch (err) {
       console.error('Failed to fetch agents:', err);
@@ -155,12 +167,15 @@ export default function App() {
   const fetchPermissions = async () => {
     try {
       const res = await fetch('/api/computer/permissions');
-      const data = await res.json();
-      if (data.permissions) {
-        setPermissions(data.permissions);
-      }
-      if (data.companion) {
-        setCompanion(data.companion);
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        if (data.permissions) {
+          setPermissions(data.permissions);
+        }
+        if (data.companion) {
+          setCompanion(data.companion);
+        }
       }
     } catch (err) {
       console.error('Failed to fetch permissions:', err);
@@ -170,9 +185,12 @@ export default function App() {
   const fetchTools = async () => {
     try {
       const res = await fetch('/api/tools');
-      const data = await res.json();
-      if (data.tools) {
-        setTools(data.tools);
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        if (data.tools) {
+          setTools(data.tools);
+        }
       }
     } catch (err) {
       console.error('Failed to fetch tools:', err);
@@ -186,9 +204,12 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ permission, state })
       });
-      const data = await res.json();
-      if (data.permissions) {
-        setPermissions(data.permissions);
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        if (data.permissions) {
+          setPermissions(data.permissions);
+        }
       }
     } catch (err) {
       console.error('Failed to update permission:', err);
@@ -230,14 +251,13 @@ export default function App() {
     }
   };
 
-  const speakAuraReply = (text: string) => {
-    if (isVoiceActive) {
-      speechService.speak(
-        text,
-        () => setOrbState('COMMUNICATING'),
-        () => setOrbState('IDLE')
-      );
-    }
+  const speakAuraReply = (text: string, targetStateAfter: AuraState = 'IDLE', lang?: string) => {
+    speechService.speak(
+      text,
+      () => setOrbState('SPEAKING'),
+      () => setOrbState(targetStateAfter),
+      lang
+    );
   };
 
   // Execute Natural Command through AURA Brain DAG Orchestrator
@@ -260,7 +280,7 @@ export default function App() {
     ]);
 
     setIsExecuting(true);
-    setOrbState('PLANNING');
+    setOrbState('UNDERSTANDING');
 
     // Create a client-side DAG plan first for instant responsiveness
     const clientPlan = auraBrain.planCommand(command);
@@ -272,15 +292,19 @@ export default function App() {
         body: JSON.stringify({ prompt: command })
       });
 
-      const data = await res.json();
+      const contentType = res.headers.get('content-type') || '';
+      const data = (res.ok && contentType.includes('application/json')) ? await res.json() : null;
 
-      if (res.ok && data.task) {
+      if (data && data.task) {
         setCurrentTask(data.task);
         setTasksList(prev => [data.task, ...(prev || []).filter(t => t?.taskId !== data.task.taskId)]);
 
         if (data.website) {
           setActiveWebsite(data.website);
           setWebsitesList(prev => [data.website, ...(prev || []).filter(w => w?.id !== data.website.id)]);
+          if (data.openWebsite) {
+            setActiveTab('projects');
+          }
         }
 
         fetchAgents();
@@ -298,21 +322,28 @@ export default function App() {
             task: data.task,
             websiteUrl: data.website ? `/api/websites/${data.website.id}` : undefined,
             activeAgents: ['AURA', 'SCOUT', 'PIXEL', 'CODE', 'QA'],
-            status: 'executing'
+            status: data.task.status === 'COMPLETED' ? 'completed' : 'executing'
           }
         ]);
 
-        speakAuraReply(summaryText);
+        const nextState: AuraState = (data.auraState as AuraState) || (data.task.status === 'COMPLETED' ? 'SUCCESS' : 'WORKING');
+
+        speakAuraReply(summaryText, nextState, data.language);
 
         if (data.task.status === 'WAITING_FOR_USER') {
           setOrbState('ERROR');
-        } else {
-          setOrbState('EXECUTING');
+        } else if (data.task.status === 'RUNNING') {
+          setOrbState('WORKING');
           runParallelDAGProgression(data.task.taskId, auraMsgId);
+        } else {
+          setOrbState(nextState);
+          if (nextState === 'SUCCESS') {
+            setTimeout(() => setOrbState('IDLE'), 3500);
+          }
         }
       } else {
         // Fallback with client plan
-        setOrbState('EXECUTING');
+        setOrbState('WORKING');
         setMessages(prev => [
           ...prev,
           {
@@ -350,24 +381,27 @@ export default function App() {
       await new Promise(r => setTimeout(r, 1400));
       try {
         const res = await fetch(`/api/tasks/${taskId}/advance`, { method: 'POST' });
-        const data = await res.json();
-        if (data.task) {
-          setCurrentTask(data.task);
-          fetchAgents();
-          if (data.task.status === 'COMPLETED') {
-            setOrbState('SUCCESS');
-            fetchWebsites();
+        const contentType = res.headers.get('content-type') || '';
+        if (res.ok && contentType.includes('application/json')) {
+          const data = await res.json();
+          if (data.task) {
+            setCurrentTask(data.task);
+            fetchAgents();
+            if (data.task.status === 'COMPLETED') {
+              setOrbState('SUCCESS');
+              fetchWebsites();
 
-            // Update conversation message status to completed
-            setMessages(prev => prev.map(m => m.id === messageId ? {
-              ...m,
-              status: 'completed',
-              websiteUrl: activeWebsite ? `/api/websites/${activeWebsite.id}` : m.websiteUrl
-            } : m));
+              // Update conversation message status to completed
+              setMessages(prev => prev.map(m => m.id === messageId ? {
+                ...m,
+                status: 'completed',
+                websiteUrl: activeWebsite ? `/api/websites/${activeWebsite.id}` : m.websiteUrl
+              } : m));
 
-            speakAuraReply('Execution completed successfully. All artifacts verified.');
-            setTimeout(() => setOrbState('IDLE'), 3000);
-            break;
+              speakAuraReply('Execution completed successfully. All artifacts verified.');
+              setTimeout(() => setOrbState('IDLE'), 3000);
+              break;
+            }
           }
         }
       } catch (err) {
@@ -379,14 +413,17 @@ export default function App() {
   const handleAdvanceStep = async (taskId: string) => {
     try {
       const res = await fetch(`/api/tasks/${taskId}/advance`, { method: 'POST' });
-      const data = await res.json();
-      if (data.task) {
-        setCurrentTask(data.task);
-        fetchAgents();
-        if (data.task.status === 'COMPLETED') {
-          setOrbState('SUCCESS');
-          fetchWebsites();
-          setTimeout(() => setOrbState('IDLE'), 3000);
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        if (data.task) {
+          setCurrentTask(data.task);
+          fetchAgents();
+          if (data.task.status === 'COMPLETED') {
+            setOrbState('SUCCESS');
+            fetchWebsites();
+            setTimeout(() => setOrbState('IDLE'), 3000);
+          }
         }
       }
     } catch (err) {
@@ -397,11 +434,14 @@ export default function App() {
   const handleApprove = async (taskId: string) => {
     try {
       const res = await fetch(`/api/tasks/${taskId}/approve`, { method: 'POST' });
-      const data = await res.json();
-      if (data.task) {
-        setCurrentTask(data.task);
-        setOrbState('EXECUTING');
-        runParallelDAGProgression(taskId, `aura-${Date.now()}`);
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        if (data.task) {
+          setCurrentTask(data.task);
+          setOrbState('EXECUTING');
+          runParallelDAGProgression(taskId, `aura-${Date.now()}`);
+        }
       }
     } catch (err) {
       console.error(err);
@@ -411,10 +451,13 @@ export default function App() {
   const handleReject = async (taskId: string) => {
     try {
       const res = await fetch(`/api/tasks/${taskId}/reject`, { method: 'POST' });
-      const data = await res.json();
-      if (data.task) {
-        setCurrentTask(data.task);
-        setOrbState('IDLE');
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        if (data.task) {
+          setCurrentTask(data.task);
+          setOrbState('IDLE');
+        }
       }
     } catch (err) {
       console.error(err);
@@ -428,9 +471,12 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ role })
       });
-      const data = await res.json();
-      if (data.user) {
-        setCurrentUser(data.user);
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        if (data.user) {
+          setCurrentUser(data.user);
+        }
       }
     } catch (err) {
       console.error(err);

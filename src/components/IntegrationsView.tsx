@@ -32,8 +32,11 @@ export const IntegrationsView: React.FC = () => {
   const fetchIntegrations = async () => {
     try {
       const res = await fetch('/api/integrations');
-      const data = await res.json();
-      setIntegrations(data.integrations || []);
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        setIntegrations(data.integrations || []);
+      }
     } catch (err) {
       console.error(err);
     } finally {

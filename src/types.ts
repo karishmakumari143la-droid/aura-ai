@@ -18,15 +18,33 @@ export interface User {
 export type AIOrbState = 
   | 'IDLE' 
   | 'LISTENING' 
+  | 'UNDERSTANDING'
   | 'THINKING' 
   | 'PLANNING' 
+  | 'SPEAKING'
+  | 'WORKING'
   | 'EXECUTING' 
   | 'COMMUNICATING' 
+  | 'LEARNING'
+  | 'EMPATHY'
   | 'VERIFYING' 
   | 'SUCCESS' 
-  | 'ERROR';
+  | 'ERROR'
+  | 'WAITING';
 
 export type AuraState = AIOrbState;
+
+export type UserEmotion = 
+  | 'CALM' 
+  | 'HAPPY' 
+  | 'EXCITED' 
+  | 'CONFUSED' 
+  | 'STRESSED' 
+  | 'SAD' 
+  | 'FRUSTRATED' 
+  | 'URGENT' 
+  | 'FOCUSED' 
+  | 'NEUTRAL';
 
 export type TaskStatus = 
   | 'QUEUED'

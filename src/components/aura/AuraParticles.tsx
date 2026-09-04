@@ -269,38 +269,70 @@ export const AuraParticles: React.FC<AuraParticlesProps> = ({
           targetRadialShift = Math.sin(time * 1.2) * 3;
           break;
         case 'LISTENING':
+          // Particles gently move inward toward AURA
           speedMult = 0.7 + (amp * 2.2);
-          targetRadialShift = -18 - (amp * 16); // inward attraction!
-          chaosNoise = amp * 2.5;
+          targetRadialShift = -22 - (amp * 18); // inward attraction!
+          chaosNoise = amp * 1.8;
+          break;
+        case 'UNDERSTANDING':
+          // Particles temporarily reorganize into harmonic wave shifts
+          speedMult = 1.5;
+          targetRadialShift = Math.sin(time * 2.8) * 9;
           break;
         case 'THINKING':
+          // Irregular intelligent orbital motion
           speedMult = 2.4 + (amp * 1.8);
-          targetRadialShift = Math.sin(time * 3.5) * 8;
+          targetRadialShift = Math.sin(time * 3.5) * 12;
           chaosNoise = 5.0;
           break;
         case 'PLANNING':
-          speedMult = 1.3;
+          // Particles form structured concentric rings
+          speedMult = 1.25;
           targetRadialShift = 0; // lock into strict rings
           break;
+        case 'SPEAKING':
+          // Particles pulse with AURA's voice amplitude
+          speedMult = 1.6 + (amp * 3.2);
+          targetRadialShift = Math.sin(time * 5.0) * (6 + amp * 22);
+          break;
+        case 'WORKING':
         case 'EXECUTING':
-          speedMult = 3.6 + (amp * 2.0); // directional stream speed
-          targetRadialShift = (Math.sin(time * 2) * 5);
+          // Particles move faster with directional streams
+          speedMult = 3.8 + (amp * 2.0); // directional stream speed
+          targetRadialShift = (Math.sin(time * 2) * 6);
           break;
         case 'COMMUNICATING':
-          speedMult = 1.8;
-          targetRadialShift = Math.sin(time * 4) * 14; // outward/inward wave
+          // Particles travel between AURA and agent nodes
+          speedMult = 2.0;
+          targetRadialShift = Math.sin(time * 4) * 16; // outward/inward wave
+          break;
+        case 'LEARNING':
+          // Particles gradually form new patterns
+          speedMult = 1.1;
+          targetRadialShift = Math.sin(time * 2.2) * 10;
+          break;
+        case 'EMPATHY':
+          // Softer slower movement and warmer visual mood
+          speedMult = 0.6;
+          targetRadialShift = Math.sin(time * 0.9) * 4;
           break;
         case 'VERIFYING':
           speedMult = 1.1;
           targetRadialShift = -12; // tighter concentric rings
           break;
         case 'SUCCESS':
+          // Particles expand outward in a subtle energy wave
           speedMult = 1.4;
-          targetRadialShift = 10;
+          targetRadialShift = 14;
           break;
         case 'ERROR':
+          // Particles become temporarily unstable and then stabilize
           speedMult = 0.9;
-          chaosNoise = 8.0;
+          chaosNoise = 8.5;
+          break;
+        case 'WAITING':
+          speedMult = 0.75;
+          targetRadialShift = Math.sin(time * 1.0) * 2;
           break;
       }
 
@@ -322,7 +354,7 @@ export const AuraParticles: React.FC<AuraParticlesProps> = ({
           p.radialDrift *= 0.92; // decay back to nominal orbit
         } else {
           // Smooth spring return to nominal baseRadius + target shift
-          const targetR = p.baseRadius + targetRadialShift + naturalOscillation + (amp * 20 * (p.layer / 4));
+          const targetR = p.baseRadius + targetRadialShift + naturalOscillation + (amp * 22 * (p.layer / 4));
           p.currentRadius += (targetR - p.currentRadius) * 0.08;
         }
 
@@ -352,10 +384,10 @@ export const AuraParticles: React.FC<AuraParticlesProps> = ({
         }
 
         // Dynamic size & opacity reaction to audio
-        const audioSizeBoost = amp * (p.layer === 1 ? 2.2 : 1.6);
+        const audioSizeBoost = amp * (p.layer === 1 ? 2.6 : 1.8);
         p.currentSize = Math.max(0.6, p.baseSize + audioSizeBoost);
 
-        const audioOpacityBoost = amp * 0.4;
+        const audioOpacityBoost = amp * 0.45;
         p.opacity = Math.min(1.0, p.baseOpacity + audioOpacityBoost);
 
         // Color selection
@@ -371,6 +403,14 @@ export const AuraParticles: React.FC<AuraParticlesProps> = ({
           fillR = 45; fillG = 212; fillB = 191; // teal #2DD4BF
         } else if (state === 'THINKING') {
           fillR = 168; fillG = 85; fillB = 247; // purple #A855F7
+        } else if (state === 'UNDERSTANDING') {
+          fillR = 56; fillG = 189; fillB = 248; // electric cyan
+        } else if (state === 'EMPATHY') {
+          fillR = 251; fillG = 113; fillB = 133; // rose/peach #FB7185
+        } else if (state === 'LEARNING') {
+          fillR = 245; fillG = 158; fillB = 11; // amber #F59E0B
+        } else if (state === 'SPEAKING') {
+          fillR = 125; fillG = 211; fillB = 252; // bright sky #7DD3FC
         } else if (p.colorType === 'purple') {
           fillR = 192; fillG = 132; fillB = 252;
         } else if (p.colorType === 'blue') {

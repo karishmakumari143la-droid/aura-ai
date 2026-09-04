@@ -30,8 +30,11 @@ export const OwnerControlPanel: React.FC<OwnerControlPanelProps> = ({ onClose })
     setLoading(true);
     try {
       const res = await fetch('/api/admin/metrics');
-      const data = await res.json();
-      setMetrics(data);
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        setMetrics(data);
+      }
     } catch (err) {
       console.error(err);
     } finally {

@@ -26,8 +26,11 @@ export const ClientsView: React.FC = () => {
   const fetchLeads = async () => {
     try {
       const res = await fetch('/api/clients');
-      const data = await res.json();
-      setLeads(data.leads || []);
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        setLeads(data.leads || []);
+      }
     } catch (err) {
       console.error(err);
     } finally {
