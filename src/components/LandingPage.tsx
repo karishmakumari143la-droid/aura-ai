@@ -63,8 +63,16 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       a: 'AURA is a living AI partner powered by a parallel multi-agent cognitive architecture. Instead of returning plain text, AURA plans an execution DAG, assigning tasks simultaneously to specialized agents (PIXEL for UI design, CODE for full-stack engineering, SCOUT for deep research, and QA for security validation) while rendering live progress.'
     },
     {
-      q: 'What are the subscription requirements for AURA AI?',
-      a: 'For this release, ALL USERS ARE FREE. Every user receives full access to the living neural interface, autonomous website builder, memory engine, and parallel workforce without payment barriers.'
+      q: 'How does the AURA AI access model work?',
+      a: 'AURA AI is 100% free for all users. Every user can create up to 5 full new projects per calendar day. Once a project is created, you can perform unlimited tasks, edits, design changes, and automation workflows inside that project without counting against your daily limit.'
+    },
+    {
+      q: 'Are there any subscriptions, paid credits, or credit card requirements?',
+      a: 'No. There are zero payment gateways, subscriptions, or credit card forms. All users enjoy free access to the living neural interface, autonomous website builder, memory engine, and parallel specialist workforce.'
+    },
+    {
+      q: 'When does the daily project counter reset?',
+      a: 'The daily project allowance automatically resets every new day at midnight (00:00 UTC), providing 5 fresh project slots every single day.'
     },
     {
       q: 'How does AURA ensure security when controlling computer tools?',
@@ -94,8 +102,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           <a href="#capabilities" className="hover:text-cyan-400 transition">Capabilities</a>
           <a href="#how-it-works" className="hover:text-cyan-400 transition">How It Works</a>
           <a href="#workforce" className="hover:text-cyan-400 transition">AI Workforce</a>
-          <a href="#automation" className="hover:text-cyan-400 transition">Automation</a>
-          <a href="#pricing" className="hover:text-cyan-400 transition">Pricing</a>
+          <a href="#access-model" className="hover:text-cyan-400 transition">Access Model</a>
           {onLogin && (
             <button onClick={onLogin} className="hover:text-cyan-400 transition">Sign In</button>
           )}
@@ -278,49 +285,53 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         </div>
       </section>
 
-      {/* 5. Pricing Section (Transparently Free) */}
-      <section id="pricing" className="py-20 px-6 border-t border-white/5 bg-slate-950/40">
+      {/* 5. Access Model Section (100% Free, 5 Projects / Day) */}
+      <section id="access-model" className="py-20 px-6 border-t border-white/5 bg-slate-950/40">
         <div className="max-w-4xl mx-auto text-center">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-950 text-cyan-300 text-xs font-semibold border border-cyan-800 mb-3">
+            <Sparkles className="w-3 h-3 text-cyan-400" />
+            <span>Open & Free Creator Access</span>
+          </div>
           <h2 className="text-2xl sm:text-3xl font-bold text-white tracking-tight">
-            Transparent Pricing
+            100% Free For All Users
           </h2>
-          <p className="mt-2 text-sm text-slate-400">
-            For this release, all users receive complete, uninhibited access to AURA AI.
+          <p className="mt-2 text-sm text-slate-400 max-w-xl mx-auto">
+            No credit card, no checkout, and no subscription plans. Every creator gets 5 new projects every calendar day with unlimited tasks per project.
           </p>
 
           <div className="mt-10 p-8 rounded-3xl bg-slate-900/80 border border-cyan-500/40 max-w-lg mx-auto shadow-2xl relative overflow-hidden">
             <div className="absolute top-0 right-0 px-4 py-1 rounded-bl-xl bg-cyan-500 text-slate-950 font-mono font-bold text-xs">
-              ALL USERS FREE
+              FREE FOR EVERYONE
             </div>
-            <h3 className="text-2xl font-bold text-white">Community & Pro Edition</h3>
-            <div className="mt-4 flex items-baseline justify-center gap-1">
-              <span className="text-5xl font-extrabold text-cyan-400">$0</span>
-              <span className="text-sm text-slate-400">/ forever free</span>
+            <h3 className="text-2xl font-bold text-white">Daily Creator Allowance</h3>
+            <div className="mt-4 flex items-baseline justify-center gap-1.5">
+              <span className="text-5xl font-extrabold text-cyan-400 font-mono">5</span>
+              <span className="text-sm font-semibold text-slate-300">Projects / Day</span>
             </div>
             <p className="mt-3 text-xs text-slate-400">
-              No credit card required. Experience the full power of parallel AI orchestration.
+              Resets automatically every day at midnight (00:00 UTC). Zero paywalls.
             </p>
 
             <ul className="mt-6 space-y-3 text-xs text-slate-300 text-left">
               <li className="flex items-center gap-2">
                 <Check className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span>Living AURA Core with Voice Reactivity & Canvas 2D physics</span>
+                <span><strong>5 New Projects Every Day</strong> — restaurant, gym, salon, portfolio & more</span>
               </li>
               <li className="flex items-center gap-2">
                 <Check className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span>Parallel DAG execution across AURA, PIXEL, CODE, SCOUT & QA</span>
+                <span><strong>Unlimited Tasks Per Project</strong> — endless edits, commands & workflows</span>
               </li>
               <li className="flex items-center gap-2">
                 <Check className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span>2.5D World Mode with interactive digital workstations</span>
+                <span><strong>Living AURA Core</strong> with dynamic audio reactivity & Canvas physics</span>
               </li>
               <li className="flex items-center gap-2">
                 <Check className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span>Structured memory preferences & learned workflow rules</span>
+                <span><strong>Full 21 Specialist Agents</strong> running parallel topological DAGs</span>
               </li>
               <li className="flex items-center gap-2">
                 <Check className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span>Multi-device responsive website generator & WhatsApp concierge</span>
+                <span><strong>Zero Payment Forms</strong> — no credit cards, subscriptions, or upgrades</span>
               </li>
             </ul>
 
@@ -329,7 +340,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               onClick={onStartUsingAI}
               className="w-full mt-8 py-3.5 rounded-2xl bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-bold text-sm shadow-xl shadow-cyan-500/20 transition cursor-pointer"
             >
-              Start Using AURA Now
+              Start Creating Now
             </button>
           </div>
         </div>

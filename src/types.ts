@@ -154,7 +154,7 @@ export interface VirtualAgent {
   name: string;
   code: string;
   role: string;
-  category: 'core' | 'development' | 'design' | 'research' | 'quality' | 'operations';
+  category: 'core' | 'development' | 'design' | 'research' | 'quality' | 'operations' | 'marketing';
   stationId: string;
   stationName: string;
   color: string;
@@ -333,4 +333,25 @@ export interface StoredFile {
   uploadedAt: string;
   url?: string;
   summary?: string;
+}
+
+export interface DailyProjectUsage {
+  userId: string;
+  date: string; // YYYY-MM-DD
+  projectsCreated: number;
+  projectIds: string[];
+}
+
+export interface ProjectQuotaStatus {
+  userId: string;
+  date: string;
+  isOwner: boolean;
+  limit: number;
+  used: number;
+  remaining: number;
+  resetAt: string;
+  projectsCreatedToday: number;
+  totalProjects: number;
+  allowed: boolean;
+  message?: string;
 }

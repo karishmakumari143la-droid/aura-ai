@@ -12,6 +12,7 @@ import { OwnerConsole } from './components/OwnerConsole';
 import { LandingPage } from './components/LandingPage';
 import { AuthModal } from './components/AuthModal';
 import { PricingModal } from './components/PricingModal';
+import { ProjectAllowanceModal } from './components/ProjectAllowanceModal';
 import { AutomationsView } from './components/AutomationsView';
 import { IntegrationsView } from './components/IntegrationsView';
 import { speechService } from './services/audio/speechService';
@@ -25,7 +26,8 @@ import {
   ComputerPermissionConfig, 
   ToolDefinition, 
   ComputerPermissionType, 
-  PermissionState 
+  PermissionState,
+  ProjectQuotaStatus
 } from './types';
 import { 
   Sparkles, 
@@ -37,7 +39,11 @@ import {
   ShieldCheck, 
   ExternalLink,
   ChevronRight,
-  Maximize2
+  Maximize2,
+  Volume2,
+  ChevronDown,
+  ChevronUp,
+  MessageSquare
 } from 'lucide-react';
 
 export default function App() {
@@ -49,6 +55,8 @@ export default function App() {
   const [showLanding, setShowLanding] = useState<boolean>(false);
   const [isAuthOpen, setIsAuthOpen] = useState<boolean>(false);
   const [isPricingOpen, setIsPricingOpen] = useState<boolean>(false);
+  const [isAllowanceModalOpen, setIsAllowanceModalOpen] = useState<boolean>(false);
+  const [projectQuota, setProjectQuota] = useState<ProjectQuotaStatus | null>(null);
   
   // Execution & AI State
   const [isExecuting, setIsExecuting] = useState<boolean>(false);
@@ -57,6 +65,7 @@ export default function App() {
   const [websitesList, setWebsitesList] = useState<WebsiteProject[]>([]);
   const [activeWebsite, setActiveWebsite] = useState<WebsiteProject | null>(null);
   const [showTaskGraphModal, setShowTaskGraphModal] = useState<boolean>(false);
+  const [showFullConversation, setShowFullConversation] = useState<boolean>(false);
 
   // Chat conversation stream
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -93,6 +102,7 @@ export default function App() {
     fetchAgents();
     fetchPermissions();
     fetchTools();
+    fetchProjectQuota();
   }, []);
 
   const fetchSession = async () => {
@@ -143,9 +153,86 @@ export default function App() {
             setActiveWebsite(data.websites[0]);
           }
         }
+        if (data.quota) {
+          setProjectQuota(data.quota);
+        }
       }
     } catch (err) {
       console.error('Failed to fetch websites:', err);
+    }
+  };
+
+  const fetchProjectQuota = async () => {
+    try {
+      const res = await fetch('/api/usage/projects');
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        setProjectQuota(data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch project quota:', err);
+    }
+  };
+
+  const handleSimulateLimit = async () => {
+    try {
+      const res = await fetch('/api/usage/simulate-limit', { method: 'POST' });
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        if (data.quota) {
+          setProjectQuota(data.quota);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to simulate quota limit:', err);
+    }
+  };
+
+  const handleResetQuota = async () => {
+    try {
+      const res = await fetch('/api/usage/reset-for-testing', { method: 'POST' });
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        if (data.quota) {
+          setProjectQuota(data.quota);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to reset quota:', err);
+    }
+  };
+
+  const handleCreateProject = async (projectData: Partial<WebsiteProject>) => {
+    try {
+      const res = await fetch('/api/websites', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(projectData)
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        fetchProjectQuota();
+        return {
+          success: false,
+          error: data.message || "Today's 5-project limit is reached. Your project allowance will reset tomorrow."
+        };
+      }
+      if (data.website) {
+        setWebsitesList(prev => [data.website, ...(prev || []).filter(w => w?.id !== data.website.id)]);
+        setActiveWebsite(data.website);
+        if (data.quota) {
+          setProjectQuota(data.quota);
+        } else {
+          fetchProjectQuota();
+        }
+        return { success: true };
+      }
+      return { success: false, error: 'Unknown response' };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Network error' };
     }
   };
 
@@ -495,7 +582,7 @@ export default function App() {
           setActiveTab('aura');
           handleExecuteCommand(prompt);
         }}
-        onOpenPricing={() => { setShowLanding(false); setIsPricingOpen(true); }}
+        onOpenPricing={() => { setShowLanding(false); setIsAllowanceModalOpen(true); }}
         onLogin={() => { setShowLanding(false); setIsAuthOpen(true); }}
       />
     );
@@ -513,6 +600,8 @@ export default function App() {
         isVoiceActive={isVoiceActive}
         onSwitchRole={handleSwitchRole}
         onOpenLanding={() => setShowLanding(true)}
+        quota={projectQuota}
+        onOpenAllowanceModal={() => setIsAllowanceModalOpen(true)}
       />
 
       {/* Main Container */}
@@ -520,127 +609,194 @@ export default function App() {
         <div className="max-w-6xl mx-auto w-full px-4 sm:px-6 py-6 flex-1 flex flex-col">
 
           {/* TAB: AURA (Core Living AI Entity & Command Cockpit) */}
-          {activeTab === 'aura' && (
-            <div className="flex-1 flex flex-col items-center justify-between space-y-6">
-              
-              {/* Header Title & Subtitle */}
-              <div className="text-center pt-2 select-none">
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-950/60 border border-cyan-800 text-cyan-300 text-xs font-mono mb-2">
-                  <Sparkles className="w-3 h-3" />
-                  <span>AURA LIVING COGNITIVE CORE</span>
-                </div>
-                <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">
-                  Your Intelligent AI Partner
-                </h1>
-                <p className="text-xs sm:text-sm text-slate-400 mt-1 max-w-xl mx-auto">
-                  Speaks, understands, creates websites, and executes parallel multi-agent workflows.
-                </p>
-              </div>
-
-              {/* Mode Switch Pill (COMMAND vs WORLD) */}
-              <div className="flex items-center gap-1.5 p-1 rounded-2xl bg-slate-900/80 border border-white/10 shadow-lg">
-                <button
-                  type="button"
-                  onClick={() => setAuraMode('COMMAND')}
-                  className={`px-4 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
-                    auraMode === 'COMMAND'
-                      ? 'bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/20'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>COMMAND MODE</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAuraMode('WORLD')}
-                  className={`px-4 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
-                    auraMode === 'WORLD'
-                      ? 'bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/20'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <Layers className="w-3.5 h-3.5" />
-                  <span>WORLD MODE (2.5D)</span>
-                </button>
-              </div>
-
-              {/* View Rendering based on Mode */}
-              {auraMode === 'COMMAND' ? (
-                <div className="w-full flex-1 flex flex-col items-center space-y-6">
-                  {/* Central Living Circular AI Core */}
-                  <div className="relative py-2 flex flex-col items-center justify-center">
-                    <AuraCore
-                      state={orbState}
-                      size="lg"
-                      showLabel
-                      onCoreClick={() => {
-                        if (orbState === 'IDLE') setOrbState('THINKING');
-                        else if (orbState === 'THINKING') setOrbState('PLANNING');
-                        else setOrbState('IDLE');
-                      }}
-                    />
+          {activeTab === 'aura' && (() => {
+            const latestAuraMsg = [...messages].reverse().find(m => m.sender === 'aura');
+            return (
+              <div className="flex-1 flex flex-col items-center justify-start space-y-6 w-full">
+                
+                {/* Header Title & Subtitle */}
+                <div className="text-center pt-1 select-none">
+                  <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-cyan-950/60 border border-cyan-800/80 text-cyan-300 text-xs font-mono mb-2 shadow-sm">
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>LIVING AI COGNITIVE CORE</span>
                   </div>
+                  <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">
+                    AURA Autonomous Operating System
+                  </h1>
+                  <p className="text-xs sm:text-sm text-slate-400 mt-1 max-w-xl mx-auto">
+                    Speaks, understands intent, synthesizes production websites, and delegates multi-agent DAGs.
+                  </p>
+                </div>
 
-                  {/* Active Task Progress Banner if a task is running */}
-                  {currentTask && (
-                    <div className="w-full max-w-3xl p-3 rounded-2xl bg-slate-950/80 border border-cyan-500/30 backdrop-blur-xl flex items-center justify-between shadow-xl animate-in fade-in">
-                      <div className="flex items-center gap-3">
-                        <div className="p-2 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400">
-                          <Cpu className="w-4 h-4 animate-pulse" />
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-bold text-white">{currentTask.title}</span>
-                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800 uppercase">
-                              {currentTask.status}
-                            </span>
-                          </div>
-                          <p className="text-[11px] text-slate-400">
-                            Parallel DAG with {currentTask.nodes?.length || 0} nodes running across specialized agents.
-                          </p>
-                        </div>
-                      </div>
+                {/* Mode Switch Pill (COMMAND vs WORLD) */}
+                <div className="flex items-center gap-1.5 p-1 rounded-2xl bg-slate-950/80 border border-white/10 shadow-lg">
+                  <button
+                    type="button"
+                    onClick={() => setAuraMode('COMMAND')}
+                    className={`px-4 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
+                      auraMode === 'COMMAND'
+                        ? 'bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/20'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>AURA LIVING CORE</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAuraMode('WORLD')}
+                    className={`px-4 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
+                      auraMode === 'WORLD'
+                        ? 'bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/20'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <Layers className="w-3.5 h-3.5" />
+                    <span>2.5D WORLD ENVIRONMENT</span>
+                  </button>
+                </div>
 
-                      <button
-                        type="button"
-                        onClick={() => setShowTaskGraphModal(!showTaskGraphModal)}
-                        className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-cyan-300 text-xs font-bold border border-white/10 transition flex items-center gap-1.5"
-                      >
-                        <Layers className="w-3.5 h-3.5" />
-                        <span>{showTaskGraphModal ? 'Hide Graph' : 'Inspect DAG'}</span>
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Optional Task Graph Expandable Drawer */}
-                  {currentTask && showTaskGraphModal && (
-                    <div className="w-full max-w-4xl animate-in zoom-in-95 duration-200">
-                      <TaskGraphViewer
-                        task={currentTask}
-                        onAdvanceStep={handleAdvanceStep}
-                        onApprove={handleApprove}
-                        onReject={handleReject}
-                        onViewWebsite={() => setActiveTab('projects')}
+                {/* View Rendering based on Mode */}
+                {auraMode === 'COMMAND' ? (
+                  <div className="w-full flex-1 flex flex-col items-center space-y-6">
+                    {/* Central Living Circular AI Core (Hero Scale) */}
+                    <div className="relative py-1 flex flex-col items-center justify-center">
+                      <AuraCore
+                        state={orbState}
+                        size="hero"
+                        showLabel
+                        onCoreClick={() => {
+                          if (orbState === 'IDLE') setOrbState('THINKING');
+                          else if (orbState === 'THINKING') setOrbState('PLANNING');
+                          else setOrbState('IDLE');
+                        }}
                       />
                     </div>
-                  )}
 
-                  {/* Conversation stream */}
-                  <AuraConversation
-                    messages={messages}
-                    currentTask={currentTask}
-                    onOpenWebsitePreview={() => setActiveTab('projects')}
-                  />
-                </div>
-              ) : (
-                /* 2.5D Digital Workspace World */
-                <div className="w-full space-y-4 animate-in fade-in duration-300">
-                  <AgentWorldView agents={agents} />
-                </div>
-              )}
-            </div>
-          )}
+                    {/* AURA Voice / Response Transcript Card directly beneath Core */}
+                    {latestAuraMsg && (
+                      <div className="w-full max-w-2xl px-5 py-4 rounded-3xl bg-slate-950/90 border border-cyan-500/30 backdrop-blur-2xl shadow-2xl animate-in fade-in zoom-in-95 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-mono font-bold text-cyan-400 flex items-center gap-1.5">
+                              <Volume2 className="w-3.5 h-3.5 animate-pulse text-cyan-300" />
+                              AURA TRANSCRIPT
+                            </span>
+                            <span className="text-[10px] text-slate-500 font-mono">{latestAuraMsg.timestamp}</span>
+                          </div>
+                          {latestAuraMsg.websiteUrl && (
+                            <button
+                              type="button"
+                              onClick={() => setActiveTab('projects')}
+                              className="text-[11px] font-bold text-cyan-300 hover:underline flex items-center gap-1"
+                            >
+                              Open Website Preview →
+                            </button>
+                          )}
+                        </div>
+                        <p className="text-sm sm:text-base text-slate-100 font-sans leading-relaxed">
+                          "{latestAuraMsg.text}"
+                        </p>
+                        {latestAuraMsg.activeAgents && latestAuraMsg.activeAgents.length > 0 && (
+                          <div className="flex items-center gap-1.5 pt-1 text-[10px] font-mono text-slate-400 flex-wrap">
+                            <span>Specialists Assigned:</span>
+                            {latestAuraMsg.activeAgents.map((ag: string) => (
+                              <span key={ag} className="px-2 py-0.5 rounded-lg bg-slate-900 border border-white/10 text-cyan-300 font-bold">
+                                {ag}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Floating Voice & Command Bar directly beneath Core & Transcript */}
+                    <div className="w-full max-w-3xl">
+                      <AuraCommandBar
+                        onExecuteCommand={handleExecuteCommand}
+                        isExecuting={isExecuting}
+                        orbState={orbState}
+                        onMicToggle={handleToggleVoice}
+                        isListening={isListening}
+                      />
+                    </div>
+
+                    {/* Active Task Progress Banner if a task is running */}
+                    {currentTask && (
+                      <div className="w-full max-w-3xl p-3.5 rounded-2xl bg-slate-950/90 border border-cyan-500/30 backdrop-blur-xl flex items-center justify-between shadow-xl animate-in fade-in">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400">
+                            <Cpu className="w-4 h-4 animate-pulse" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-bold text-white">{currentTask.title}</span>
+                              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800 uppercase">
+                                {currentTask.status}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slate-400">
+                              Parallel DAG with {currentTask.nodes?.length || 0} nodes running across specialized agents.
+                            </p>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setShowTaskGraphModal(!showTaskGraphModal)}
+                          className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-cyan-300 text-xs font-bold border border-white/10 transition flex items-center gap-1.5"
+                        >
+                          <Layers className="w-3.5 h-3.5" />
+                          <span>{showTaskGraphModal ? 'Hide Graph' : 'Inspect DAG'}</span>
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Optional Task Graph Expandable Drawer */}
+                    {currentTask && showTaskGraphModal && (
+                      <div className="w-full max-w-4xl animate-in zoom-in-95 duration-200">
+                        <TaskGraphViewer
+                          task={currentTask}
+                          onAdvanceStep={handleAdvanceStep}
+                          onApprove={handleApprove}
+                          onReject={handleReject}
+                          onViewWebsite={() => setActiveTab('projects')}
+                        />
+                      </div>
+                    )}
+
+                    {/* Collapsible Full Neural Conversation History Drawer */}
+                    <div className="w-full max-w-3xl flex flex-col items-center pt-2 pb-6">
+                      <button
+                        type="button"
+                        onClick={() => setShowFullConversation(!showFullConversation)}
+                        className="inline-flex items-center gap-2 px-4 py-2 rounded-2xl bg-slate-950/80 hover:bg-slate-900 border border-white/10 text-xs font-mono text-slate-400 hover:text-white transition shadow-sm"
+                      >
+                        <MessageSquare className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>{showFullConversation ? 'Hide Conversation History' : `View Full Conversation History (${messages.length})`}</span>
+                        {showFullConversation ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                      </button>
+
+                      {showFullConversation && (
+                        <div className="w-full mt-4 animate-in fade-in duration-300">
+                          <AuraConversation
+                            messages={messages}
+                            currentTask={currentTask}
+                            onOpenWebsitePreview={() => setActiveTab('projects')}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  /* 2.5D Digital Workspace World */
+                  <div className="w-full space-y-4 animate-in fade-in duration-300">
+                    <AgentWorldView agents={agents} />
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* TAB: WORK (Dedicated Task DAG Graph & Execution History) */}
           {activeTab === 'work' && (
@@ -810,16 +966,18 @@ export default function App() {
           )}
         </div>
 
-        {/* Sticky Command Bar at the bottom (Available when in AURA tab or across tabs) */}
-        <div className="sticky bottom-0 pt-4 pb-3 px-4 sm:px-6 bg-gradient-to-t from-[#030509] via-[#030509]/95 to-transparent z-30">
-          <AuraCommandBar
-            onExecuteCommand={handleExecuteCommand}
-            isExecuting={isExecuting}
-            orbState={orbState}
-            onMicToggle={handleToggleVoice}
-            isListening={isListening}
-          />
-        </div>
+        {/* Sticky Command Bar at the bottom (Available across other tabs) */}
+        {activeTab !== 'aura' && (
+          <div className="sticky bottom-0 pt-4 pb-3 px-4 sm:px-6 bg-gradient-to-t from-[#030509] via-[#030509]/95 to-transparent z-30">
+            <AuraCommandBar
+              onExecuteCommand={handleExecuteCommand}
+              isExecuting={isExecuting}
+              orbState={orbState}
+              onMicToggle={handleToggleVoice}
+              isListening={isListening}
+            />
+          </div>
+        )}
       </main>
 
       {/* Modals */}

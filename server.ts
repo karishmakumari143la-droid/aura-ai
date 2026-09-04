@@ -174,6 +174,63 @@ const initialAgents: VirtualAgent[] = [
     energy: 99,
     tasksCompleted: 64,
     allowedTools: ['linterTool', 'contrastVerifierTool', 'securityAuditTool']
+  },
+  {
+    id: 'agent-research',
+    name: 'RESEARCH',
+    code: 'RESEARCH',
+    role: 'Market Intelligence & Data Analyst',
+    category: 'research',
+    stationId: 'station-research-lab',
+    stationName: 'Market & Data Intelligence Lab',
+    color: '#06B6D4',
+    accentColor: 'rgba(6, 182, 212, 0.2)',
+    avatarIcon: 'Database',
+    pixelSprite: 'analyst_research',
+    status: 'idle',
+    animation: 'idle',
+    currentActivity: 'Continuous market sentiment and data crawling ready',
+    energy: 96,
+    tasksCompleted: 45,
+    allowedTools: ['marketCrawlerTool', 'sentimentAnalyzerTool', 'dataSynthesizerTool']
+  },
+  {
+    id: 'agent-deploy',
+    name: 'DEPLOY',
+    code: 'DEPLOY',
+    role: 'Cloud Runtime & Production Infrastructure Engineer',
+    category: 'operations',
+    stationId: 'station-cloud-ops',
+    stationName: 'Production Cloud & CI/CD Deck',
+    color: '#14B8A6',
+    accentColor: 'rgba(20, 184, 166, 0.2)',
+    avatarIcon: 'Globe',
+    pixelSprite: 'devops_deploy',
+    status: 'idle',
+    animation: 'idle',
+    currentActivity: 'Edge container cluster healthy, zero-downtime pipeline standing by',
+    energy: 100,
+    tasksCompleted: 78,
+    allowedTools: ['containerDeployerTool', 'edgeConfigTool', 'sslProvisionerTool']
+  },
+  {
+    id: 'agent-content',
+    name: 'CONTENT',
+    code: 'CONTENT',
+    role: 'Creative Copywriter & SEO Strategist',
+    category: 'marketing',
+    stationId: 'station-content-studio',
+    stationName: 'Copy & Search Optimization Studio',
+    color: '#F59E0B',
+    accentColor: 'rgba(245, 158, 11, 0.2)',
+    avatarIcon: 'FileText',
+    pixelSprite: 'copywriter_content',
+    status: 'idle',
+    animation: 'idle',
+    currentActivity: 'High-conversion headline and structured JSON-LD schema builder armed',
+    energy: 94,
+    tasksCompleted: 53,
+    allowedTools: ['copywriterTool', 'seoAuditTool', 'headlineOptimizerTool']
   }
 ];
 
@@ -393,6 +450,125 @@ const websites: WebsiteProject[] = [
     createdAt: new Date(Date.now() - 43200000).toISOString()
   }
 ];
+
+// -------------------------------------------------------------
+// REAL DAILY PROJECT USAGE & ACCESS CONTROL SYSTEM
+// Rule: Every user is 100% FREE.
+// Limit: Up to 5 NEW projects per user per calendar day.
+// Counter resets automatically every new day (Midnight 00:00 UTC).
+// Owner role gets unlimited projects (role-based, not paid).
+// Limit is on PROJECTS, not individual messages, commands, or tasks.
+// Existing projects remain usable with unlimited edits and tasks.
+// -------------------------------------------------------------
+interface DailyUsageRecord {
+  userId: string;
+  date: string; // YYYY-MM-DD
+  projectsCreated: number;
+  projectIds: string[];
+}
+
+function getTodayDateString(): string {
+  const now = new Date();
+  return now.toISOString().split('T')[0];
+}
+
+const dailyProjectUsageDatabase: DailyUsageRecord[] = [
+  {
+    userId: 'usr-dev-1',
+    date: getTodayDateString(),
+    projectsCreated: 2,
+    projectIds: ['web-001', 'web-002']
+  },
+  {
+    userId: 'usr-owner',
+    date: getTodayDateString(),
+    projectsCreated: 2,
+    projectIds: ['web-001', 'web-002']
+  }
+];
+
+function getUserProjectUsage(userId: string): DailyUsageRecord {
+  const today = getTodayDateString();
+  let record = dailyProjectUsageDatabase.find(r => r.userId === userId && r.date === today);
+  if (!record) {
+    record = {
+      userId,
+      date: today,
+      projectsCreated: 0,
+      projectIds: []
+    };
+    dailyProjectUsageDatabase.push(record);
+  }
+  return record;
+}
+
+function checkProjectLimit(user: User): {
+  allowed: boolean;
+  reason?: string;
+  limit: number;
+  used: number;
+  remaining: number;
+  resetAt: string;
+  message?: string;
+  isOwner: boolean;
+  projectsCreatedToday: number;
+  totalProjects: number;
+} {
+  const isOwner = user.role === 'OWNER' || user.isOwner === true;
+  const usage = getUserProjectUsage(user.id);
+  const DAILY_LIMIT = 5;
+  const used = usage.projectsCreated;
+  const resetAt = 'Midnight (00:00 UTC)';
+
+  if (isOwner) {
+    return {
+      allowed: true,
+      isOwner: true,
+      limit: 999999,
+      used,
+      remaining: 999999,
+      resetAt,
+      projectsCreatedToday: used,
+      totalProjects: websites.length,
+      message: 'Owner Access: Unlimited projects enabled.'
+    };
+  }
+
+  if (used >= DAILY_LIMIT) {
+    return {
+      allowed: false,
+      isOwner: false,
+      reason: 'DAILY_PROJECT_LIMIT_REACHED',
+      limit: DAILY_LIMIT,
+      used,
+      remaining: 0,
+      resetAt,
+      projectsCreatedToday: used,
+      totalProjects: websites.length,
+      message: "Today's 5-project limit is reached. Your project allowance will reset tomorrow."
+    };
+  }
+
+  return {
+    allowed: true,
+    isOwner: false,
+    limit: DAILY_LIMIT,
+    used,
+    remaining: DAILY_LIMIT - used,
+    resetAt,
+    projectsCreatedToday: used,
+    totalProjects: websites.length,
+    message: `${DAILY_LIMIT - used} of ${DAILY_LIMIT} project slot${(DAILY_LIMIT - used) === 1 ? '' : 's'} remaining today.`
+  };
+}
+
+function recordProjectCreation(user: User, projectId: string) {
+  const usage = getUserProjectUsage(user.id);
+  usage.projectsCreated += 1;
+  if (!usage.projectIds.includes(projectId)) {
+    usage.projectIds.push(projectId);
+  }
+}
 
 // Active Context Tracker for continuous conversation & references ("इसका", "pricing update karo", etc.)
 const activeContext = {
@@ -1369,11 +1545,14 @@ Context Memories: ${JSON.stringify(relevantMemories.map(m => `${m.category}: ${m
 
 Decompose this task into a Directed Acyclic Graph (DAG) with dependency levels so independent tasks execute IN PARALLEL.
 Available Specialist Agents:
-- AURA (id: "agent-aura", role: "Orchestrator & Companion")
+- AURA (id: "agent-aura", role: "Orchestrator & Living AI Core")
 - SCOUT (id: "agent-scout", role: "Research & Intelligence")
 - PIXEL (id: "agent-pixel", role: "Design & Spatial UI")
 - CODE (id: "agent-code", role: "Engineering & Code")
 - QA (id: "agent-qa", role: "Verification & Compliance")
+- RESEARCH (id: "agent-research", role: "Market Intelligence & Data")
+- DEPLOY (id: "agent-deploy", role: "Cloud Runtime & Deployment")
+- CONTENT (id: "agent-content", role: "Copywriting & SEO Engine")
 
 Rules:
 1. Level 0 tasks have NO dependencies (dependsOn: []) and MUST execute in parallel simultaneously (e.g. SCOUT research + PIXEL design).
@@ -1670,9 +1849,48 @@ Return JSON in this EXACT schema:
 
     tasks.unshift(newTask);
 
-    // If website creation, also synthesize WebsiteProject
+    // If website creation, also synthesize WebsiteProject (with server-side quota enforcement)
     let generatedWebsite: WebsiteProject | null = null;
+    let quotaStatus = checkProjectLimit(currentUser);
+
     if (isWebsiteTask) {
+      if (!quotaStatus.allowed) {
+        // Enforce server-side limit: Reject project creation
+        const limitMsg = "Today's 5-project limit is reached. Your project allowance will reset tomorrow. All existing projects remain open and editable with unlimited tasks.";
+        newTask.status = 'COMPLETED';
+        newTask.title = `Daily Project Allowance Reached (5/5 Projects Used)`;
+        newTask.nodes = [{
+          id: 'node-limit-reached',
+          title: 'Daily Project Allowance Reached (5/5 Projects)',
+          agentId: 'agent-aether',
+          agentName: 'AURA',
+          role: 'Access Monitor',
+          level: 0,
+          dependsOn: [],
+          status: 'completed',
+          progress: 100,
+          detail: "Today's 5-project limit is reached. Your project allowance will reset tomorrow. Existing projects remain fully usable with unlimited tasks.",
+          logs: [
+            '[AURA Access Monitor] Daily project limit (5/5) reached for free tier.',
+            '[AURA Access Monitor] No new project created. Existing projects retain full capability.'
+          ],
+          completedAt: 'Just now'
+        }];
+        newTask.edges = [];
+        newTask.logs.push(`[${new Date().toLocaleTimeString()}] Project creation limit verified: 5/5 used today.`);
+
+        return res.json({
+          task: newTask,
+          understanding: 'Project creation paused: Daily allowance of 5 projects reached',
+          summary: limitMsg,
+          website: null,
+          quota: quotaStatus,
+          auraState: 'ERROR',
+          userEmotion: 'CALM',
+          language: activeContext.language
+        });
+      }
+
       const siteId = 'web-' + Math.random().toString(36).substr(2, 8);
       const isRestaurant = detectedCategory === 'restaurant';
       const siteName = isRestaurant ? 'L’Aura Artisanal Dining' : 'IronCore High-Performance Gym';
@@ -1716,6 +1934,8 @@ Return JSON in this EXACT schema:
         updatedAt: new Date().toISOString()
       };
 
+      recordProjectCreation(currentUser, siteId);
+      quotaStatus = checkProjectLimit(currentUser);
       websites.unshift(generatedWebsite);
     }
 
@@ -1724,6 +1944,7 @@ Return JSON in this EXACT schema:
       understanding,
       summary,
       website: generatedWebsite,
+      quota: quotaStatus,
       detectedPreference,
       auraState: 'EXECUTING',
       userEmotion: activeContext.userEmotion,
@@ -1974,10 +2195,72 @@ Return JSON in this EXACT schema:
   });
 
   // ===========================================================
-  // 7. WEBSITES & PROJECTS
+  // 7. WEBSITES & PROJECTS (Server-Side Quota Enforced)
   // ===========================================================
   app.get('/api/websites', (req: Request, res: Response) => {
-    res.json({ websites });
+    res.json({ 
+      websites,
+      quota: checkProjectLimit(currentUser)
+    });
+  });
+
+  app.post('/api/websites', (req: Request, res: Response) => {
+    const quota = checkProjectLimit(currentUser);
+    if (!quota.allowed) {
+      return res.status(429).json({
+        allowed: false,
+        error: 'DAILY_PROJECT_LIMIT_REACHED',
+        reason: 'DAILY_PROJECT_LIMIT_REACHED',
+        limit: quota.limit,
+        used: quota.used,
+        remaining: 0,
+        resetAt: quota.resetAt,
+        message: "Today's 5-project limit is reached. Your project allowance will reset tomorrow."
+      });
+    }
+
+    const { name, category, headline, description, pricing, whatsappNumber, heroImage, sections } = req.body;
+    const siteId = 'web-' + Math.random().toString(36).substr(2, 8);
+    const siteName = name || 'New Project';
+    const cat = (category || 'general').toLowerCase();
+
+    const newSite: WebsiteProject = {
+      id: siteId,
+      name: siteName,
+      category: cat,
+      slug: `${cat}-${Date.now().toString(36)}`,
+      headline: headline || `${siteName} — Built with AURA AI`,
+      description: description || 'Engineered with autonomous specialist agents and verified accessibility.',
+      pricing: pricing || [
+        { name: 'Starter', price: '$49', period: '/mo', features: ['Core Services', 'Email & Chat Support', 'Fast Turnaround'] },
+        { name: 'Signature', price: '$99', period: '/mo', features: ['All Starter Features', 'Dedicated Specialist Attention', 'Priority Queue'] }
+      ],
+      whatsappNumber: whatsappNumber || '+1 (555) 000-0000',
+      whatsappCtaText: 'Contact Concierge on WhatsApp',
+      contactEmail: 'contact@example.com',
+      heroImage: heroImage || 'https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&w=1200&q=80',
+      sections: sections || [
+        { id: 'about', title: 'About the Project', content: 'Engineered with precision design tokens, clean layout, and WCAG accessibility standards.' },
+        { id: 'pricing', title: 'Pricing & Options', content: 'Transparent offerings tailored for rapid customer conversion and seamless checkout.' },
+        { id: 'contact', title: 'Get in Touch', content: 'Connect directly with our team through our instant messaging bridge.' }
+      ],
+      status: 'ready',
+      seo: {
+        metaTitle: `${siteName} | Live Project`,
+        metaDescription: description || `Official digital experience for ${siteName}.`,
+        keywords: [cat, 'online', 'vip concierge']
+      },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    recordProjectCreation(currentUser, siteId);
+    websites.unshift(newSite);
+
+    res.status(201).json({
+      website: newSite,
+      quota: checkProjectLimit(currentUser)
+    });
   });
 
   app.patch('/api/websites/:id', (req: Request, res: Response) => {
@@ -1995,19 +2278,68 @@ Return JSON in this EXACT schema:
   });
 
   // ===========================================================
-  // 8. BILLING ARCHITECTURE (Currently All Users Free, No Fake Payment)
+  // 8. ACCESS CONTROL & DAILY PROJECT ALLOWANCE (100% FREE)
   // ===========================================================
+  app.get('/api/usage/projects', (req: Request, res: Response) => {
+    const quota = checkProjectLimit(currentUser);
+    res.json({
+      userId: currentUser.id,
+      date: getTodayDateString(),
+      isOwner: quota.isOwner,
+      limit: quota.limit,
+      used: quota.used,
+      remaining: quota.remaining,
+      resetAt: quota.resetAt,
+      projectsCreatedToday: quota.projectsCreatedToday,
+      totalProjects: websites.length,
+      allowed: quota.allowed,
+      message: quota.message
+    });
+  });
+
+  // Developer/Test helper to simulate hitting the 5-project limit
+  app.post('/api/usage/simulate-limit', (req: Request, res: Response) => {
+    const usage = getUserProjectUsage(currentUser.id);
+    usage.projectsCreated = 5;
+    res.json({
+      success: true,
+      quota: checkProjectLimit(currentUser),
+      message: 'Usage simulated: 5 of 5 daily projects used today.'
+    });
+  });
+
+  // Developer/Test helper to reset daily usage counter
+  app.post('/api/usage/reset-for-testing', (req: Request, res: Response) => {
+    const usage = getUserProjectUsage(currentUser.id);
+    usage.projectsCreated = 0;
+    usage.projectIds = [];
+    res.json({
+      success: true,
+      quota: checkProjectLimit(currentUser),
+      message: 'Daily project counter reset to 0/5.'
+    });
+  });
+
+  app.get('/api/access-model', (req: Request, res: Response) => {
+    const quota = checkProjectLimit(currentUser);
+    res.json({
+      model: '100% Free For All Users',
+      dailyLimit: 5,
+      unlimitedTasksPerProject: true,
+      unlimitedForOwner: true,
+      resetTime: 'Midnight (00:00 UTC)',
+      quota
+    });
+  });
+
   app.get('/api/subscriptions', (req: Request, res: Response) => {
+    const quota = checkProjectLimit(currentUser);
     res.json({
       currentPlan: 'FREE',
       status: 'active',
       isFreePhase: true,
-      message: 'All features currently unlocked during AETHER preview. Premium plans coming soon.',
-      plans: [
-        { id: 'FREE', name: 'Standard Access', price: '$0', period: '/forever', description: 'Currently active for all users during preview phase.', status: 'CURRENT' },
-        { id: 'PRO', name: 'Pro Specialist Team', price: '$20', period: '/month', description: '20+ Specialist Agents, Cloud Workers, and Unlimited Parallel Tasks.', status: 'COMING_SOON' },
-        { id: 'BUSINESS', name: 'Business Scale', price: '$79', period: '/month', description: 'Dedicated Private Cloud Nodes, Custom Fine-Tunes, SLA.', status: 'COMING_SOON' }
-      ]
+      message: 'AURA AI is 100% free for all users. 5 new projects every calendar day with unlimited tasks per project.',
+      quota
     });
   });
 
@@ -2019,10 +2351,15 @@ Return JSON in this EXACT schema:
       return res.status(403).json({ error: 'Owner access required' });
     }
 
+    const quota = checkProjectLimit(currentUser);
+
     res.json({
       totalUsers: users.length,
       activeAgents: agents.filter(a => a.status === 'working').length,
       totalTasks: tasks.length,
+      totalWebsites: websites.length,
+      dailyProjectLimit: 5,
+      dailyProjectsCreatedToday: quota.projectsCreatedToday,
       totalMemories: memoryDatabase.length,
       systemHealth: 'healthy',
       companionConnected: localCompanionState.connected,
@@ -2051,23 +2388,7 @@ Return JSON in this EXACT schema:
   });
 
   // ===========================================================
-  // 10. BILLING ACTIONS & UPGRADES
-  // ===========================================================
-  app.post('/api/subscriptions/upgrade', (req: Request, res: Response) => {
-    currentUser.subscriptionPlan = 'PRO';
-    if (currentUser.role !== 'OWNER') {
-      currentUser.role = 'PAID_USER';
-    }
-    currentUser.subscriptionStatus = 'active';
-    res.json({
-      success: true,
-      message: 'Successfully upgraded to Pro Specialist Team! 20+ Specialist Agents unlocked.',
-      user: currentUser
-    });
-  });
-
-  // ===========================================================
-  // 11. SERVICE INTEGRATIONS & CONNECTIVITY
+  // 10. SERVICE INTEGRATIONS & CONNECTIVITY (Zero Payment Gateways)
   // ===========================================================
   const integrationsList = [
     {
@@ -2101,14 +2422,6 @@ Return JSON in this EXACT schema:
       status: 'connected',
       description: 'Self-hosted visual node orchestration for advanced multi-step triggers & webhooks.',
       details: 'Connected to local execution runner node.'
-    },
-    {
-      id: 'stripe',
-      name: 'Stripe Global Payments',
-      icon: 'CreditCard',
-      status: 'connected',
-      description: 'One-click checkout links, monthly recurring subscriptions, and INR/USD currency conversion.',
-      details: 'Production test keys configured.'
     },
     {
       id: 'cloudsql',
