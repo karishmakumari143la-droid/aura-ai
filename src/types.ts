@@ -130,6 +130,7 @@ export interface HumanApproval {
 
 export interface Task {
   taskId: string;
+  commandId?: string;
   userId: string;
   projectId?: string;
   title: string;
@@ -143,7 +144,10 @@ export interface Task {
   createdAt: string;
   updatedAt: string;
   result?: string;
+  verification?: string;
   error?: string;
+  executionStartedAt?: string;
+  executionCompletedAt?: string;
   logs: string[];
 }
 

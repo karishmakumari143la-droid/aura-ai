@@ -1,5 +1,6 @@
 import React from 'react';
 import { User, AuraState, ProjectQuotaStatus } from '../../types';
+import { AuraLogo } from './AuraLogo';
 import { 
   Sparkles, 
   Cpu, 
@@ -22,8 +23,8 @@ interface AuraNavbarProps {
   onSelectTab: (tab: AuraTab) => void;
   orbState: AuraState;
   onToggleVoice: () => void;
+  onLogout: () => void;
   isVoiceActive: boolean;
-  onSwitchRole: (role: 'OWNER' | 'FREE_USER') => void;
   onOpenLanding?: () => void;
   quota?: ProjectQuotaStatus | null;
   onOpenAllowanceModal?: () => void;
@@ -35,8 +36,8 @@ export const AuraNavbar: React.FC<AuraNavbarProps> = ({
   onSelectTab,
   orbState,
   onToggleVoice,
+  onLogout,
   isVoiceActive,
-  onSwitchRole,
   onOpenLanding,
   quota,
   onOpenAllowanceModal
@@ -62,19 +63,7 @@ export const AuraNavbar: React.FC<AuraNavbarProps> = ({
           onClick={() => onSelectTab('aura')}
           className="flex items-center gap-2.5 focus:outline-none group text-left"
         >
-          <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-cyan-500 via-blue-600 to-purple-600 p-[1.5px] shadow-lg shadow-cyan-500/20 group-hover:scale-105 transition-transform">
-            <div className="w-full h-full bg-[#03060E] rounded-[10px] flex items-center justify-center">
-              <span className="text-cyan-400 font-extrabold text-[11px] tracking-tight">AI</span>
-            </div>
-          </div>
-          <div>
-            <div className="flex items-center gap-1.5">
-              <span className="font-extrabold text-sm sm:text-base tracking-wider text-white">AURA</span>
-              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-cyan-950/80 text-cyan-300 border border-cyan-800/80 uppercase tracking-wider">
-                LIVING AI
-              </span>
-            </div>
-          </div>
+          <AuraLogo size={34} compact />
         </button>
 
         {onOpenLanding && (
@@ -151,16 +140,7 @@ export const AuraNavbar: React.FC<AuraNavbarProps> = ({
           </div>
         </button>
 
-        {/* Subtle animated status beacon: ONLINE */}
-        <div className="hidden lg:flex items-center gap-2 px-2.5 py-1 rounded-xl bg-slate-950/80 border border-white/[0.08] text-xs font-mono">
-          <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
-          </span>
-          <span className="text-emerald-400 font-bold tracking-wider text-[11px]">ONLINE</span>
-        </div>
-
-        {/* Voice Active Toggle with animated indicator */}
+        {/* Voice control reflects actual browser recognition state */}
         <button
           type="button"
           onClick={onToggleVoice}
@@ -188,20 +168,13 @@ export const AuraNavbar: React.FC<AuraNavbarProps> = ({
           )}
         </button>
 
-        {/* User / Owner Indicator with simulation switch */}
+        {/* Authenticated user indicator */}
         <div className="flex items-center gap-1.5 bg-slate-950/80 border border-white/[0.08] px-2.5 py-1 rounded-xl text-xs">
           <span className={`w-1.5 h-1.5 rounded-full ${isOwner ? 'bg-amber-400' : 'bg-cyan-400'}`} />
           <span className="font-mono text-slate-300 text-[11px]">
             {isOwner ? 'OWNER' : 'FREE USER'}
           </span>
-          <button
-            type="button"
-            onClick={() => onSwitchRole(isOwner ? 'FREE_USER' : 'OWNER')}
-            className="text-[10px] text-cyan-400 hover:underline ml-1 font-mono hidden sm:inline"
-            title="Toggle user role for preview testing"
-          >
-            [{isOwner ? 'Simulate Free' : 'Enable Owner'}]
-          </button>
+          <button type="button" onClick={onLogout} className="ml-1 text-[10px] font-mono text-slate-500 hover:text-rose-300" title="Sign out">Sign out</button>
         </div>
       </div>
     </header>

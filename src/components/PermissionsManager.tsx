@@ -106,7 +106,7 @@ export const PermissionsManager: React.FC<PermissionsManagerProps> = ({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-base font-bold text-white">Local Aether Desktop Companion</h3>
+                <h3 className="text-base font-bold text-white">Local AURA Desktop Companion</h3>
                 <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold uppercase ${
                   companion.connected 
                     ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
@@ -116,7 +116,7 @@ export const PermissionsManager: React.FC<PermissionsManagerProps> = ({
                 </span>
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
-                Architecture: AETHER Cloud OS → Local Companion Agent → Host System Sandbox
+                Architecture: AURA AI → Local Companion Agent → Host System Sandbox
               </p>
             </div>
           </div>
@@ -135,7 +135,7 @@ export const PermissionsManager: React.FC<PermissionsManagerProps> = ({
             </p>
           </div>
           <button
-            onClick={() => alert('Download link for AETHER Companion CLI (daemon): curl -sSL https://aether.os/install.sh | bash')}
+            onClick={() => alert('AURA Desktop Companion setup is not currently available.')}
             className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-300 font-mono text-xs border border-cyan-500/30 transition"
           >
             Install Companion CLI
@@ -218,7 +218,7 @@ export const PermissionsManager: React.FC<PermissionsManagerProps> = ({
           <h3 className="text-base font-bold text-white">Authorized Tool Adapters & Status</h3>
         </div>
         <p className="text-xs text-slate-400">
-          AETHER only reports successful tool actions when confirmed by verified system responses.
+          AURA only reports successful tool actions when confirmed by verified system responses.
         </p>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pt-2">

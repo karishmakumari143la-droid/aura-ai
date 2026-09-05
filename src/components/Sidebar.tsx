@@ -130,7 +130,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
             <span>Autonomous Core</span>
           </span>
-          <span className="font-mono text-[10px] text-slate-500">Gemini 3.8</span>
+          <span className="font-mono text-[10px] text-slate-500">AURA Core</span>
         </div>
       </div>
     </aside>

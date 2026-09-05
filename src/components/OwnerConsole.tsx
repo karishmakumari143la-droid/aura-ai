@@ -18,13 +18,11 @@ import {
 
 interface OwnerConsoleProps {
   currentUser: User;
-  onSwitchRole?: (role: 'OWNER' | 'FREE_USER') => void;
   onClose?: () => void;
 }
 
 export const OwnerConsole: React.FC<OwnerConsoleProps> = ({
   currentUser,
-  onSwitchRole,
   onClose
 }) => {
   const [metrics, setMetrics] = useState<any>(null);
@@ -82,28 +80,6 @@ export const OwnerConsole: React.FC<OwnerConsoleProps> = ({
           </div>
         </div>
 
-        {/* Role Switcher for Testing */}
-        {onSwitchRole && (
-          <div className="flex items-center gap-2 bg-slate-900 p-1.5 rounded-2xl border border-white/10 text-xs">
-            <span className="text-slate-400 px-2 font-mono text-[11px]">Test As:</span>
-            <button
-              onClick={() => onSwitchRole('OWNER')}
-              className={`px-3 py-1 rounded-xl font-semibold transition ${
-                currentUser.role === 'OWNER' ? 'bg-purple-500 text-white font-bold' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Owner
-            </button>
-            <button
-              onClick={() => onSwitchRole('FREE_USER')}
-              className={`px-3 py-1 rounded-xl font-semibold transition ${
-                currentUser.role === 'FREE_USER' ? 'bg-cyan-500 text-slate-950 font-bold' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Free User
-            </button>
-          </div>
-        )}
       </div>
 
       {/* Metrics Row */}
@@ -135,7 +111,7 @@ export const OwnerConsole: React.FC<OwnerConsoleProps> = ({
           <h3 className="text-base font-bold text-white">System Self-Improvement Proposals</h3>
         </div>
         <p className="text-xs text-slate-400">
-          AETHER continuously observes pipeline execution times, identifies bottlenecks, and proposes architecture adjustments.
+              AURA continuously observes recorded pipeline timings, identifies bottlenecks, and proposes architecture adjustments.
         </p>
 
         <div className="space-y-3 pt-2">

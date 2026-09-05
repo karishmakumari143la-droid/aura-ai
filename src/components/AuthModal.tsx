@@ -6,27 +6,26 @@ import {
   User, 
   ArrowRight, 
   Sparkles, 
-  Crown, 
-  Check, 
   ShieldCheck,
-  Cpu
+  Chrome,
+  Smartphone,
+  KeyRound
 } from 'lucide-react';
 import { AIOrb } from './AIOrb';
+import { AuraLogo } from './aura/AuraLogo';
 
 interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
   onLoginSuccess: (userData: any) => void;
-  ownerEmail: string;
 }
 
 export const AuthModal: React.FC<AuthModalProps> = ({
   isOpen,
   onClose,
   onLoginSuccess,
-  ownerEmail
 }) => {
-  const [mode, setMode] = useState<'login' | 'register' | 'forgot'>('login');
+  const [mode, setMode] = useState<'login' | 'register' | 'forgot' | 'emailOtp' | 'mobileOtp'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
@@ -40,11 +39,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setIsLoading(true);
     setMessage(null);
 
-    const endpoint = mode === 'login' 
+    const endpoint = mode === 'login'
       ? '/api/auth/login' 
       : mode === 'register' 
       ? '/api/auth/register' 
-      : '/api/auth/forgot-password';
+      : mode === 'forgot' ? '/api/auth/forgot-password' : mode === 'emailOtp' ? '/api/auth/email-otp' : '/api/auth/mobile-otp';
 
     try {
       const res = await fetch(endpoint, {
@@ -60,7 +59,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
       if (res.ok && data) {
         if (mode === 'forgot') {
-          setMessage('Password reset instructions dispatched to your email.');
+          setMessage(data.message || 'Password reset requested.');
         } else {
           onLoginSuccess(data.user);
           onClose();
@@ -75,22 +74,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
   };
 
-  const handleQuickOwnerLogin = async () => {
+  const handleProviderAction = async (endpoint: string) => {
     setIsLoading(true);
+    setMessage(null);
     try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: ownerEmail, password: 'MasterOwnerPassword123' })
-      });
-      const contentType = res.headers.get('content-type') || '';
-      if (res.ok && contentType.includes('application/json')) {
-        const data = await res.json();
-        onLoginSuccess(data.user);
-        onClose();
-      }
-    } catch (err) {
-      console.error(err);
+      const res = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, phone: email }) });
+      const data = await res.json().catch(() => null);
+      setMessage(data?.message || data?.error || 'Authentication provider setup is required.');
+    } catch {
+      setMessage('Authentication gateway is unavailable.');
     } finally {
       setIsLoading(false);
     }
@@ -110,16 +102,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         {/* Left Visual Branding Panel */}
         <div className="hidden md:flex flex-col justify-between p-8 bg-gradient-to-br from-slate-900 via-indigo-950/40 to-slate-950 border-r border-white/5 relative overflow-hidden">
           <div className="relative z-10">
-            <div className="flex items-center gap-2 mb-4">
-              <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-cyan-500 to-indigo-600 p-0.5">
-                <div className="w-full h-full bg-slate-950 rounded-[10px] flex items-center justify-center">
-                  <Cpu className="w-4 h-4 text-cyan-400" />
-                </div>
-              </div>
-              <span className="font-extrabold text-white text-base tracking-tight">AETHER OS</span>
-            </div>
+            <div className="mb-4"><AuraLogo size={38} /></div>
             <p className="text-xs text-slate-400 leading-relaxed">
-              The Autonomous Business Operating System. Empowered by 21 specialist agents.
+              YOUR LIVING AI UNIVERSE
             </p>
           </div>
 
@@ -130,11 +115,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           <div className="relative z-10 space-y-2 text-[11px] text-slate-400">
             <div className="flex items-center gap-2">
               <ShieldCheck className="w-3.5 h-3.5 text-cyan-400" />
-              <span>Full-Stack Verified Authentication</span>
+              <span>Secure server-side sessions</span>
             </div>
             <div className="flex items-center gap-2">
               <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-              <span>Gemini 3.8 Multi-Agent Core</span>
+              <span>AURA Intelligence Core</span>
             </div>
           </div>
         </div>
@@ -143,10 +128,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         <div className="p-6 sm:p-8 flex flex-col justify-between">
           <div>
             <h3 className="text-xl font-bold text-white">
-              {mode === 'login' ? 'Sign In to Workspace' : mode === 'register' ? 'Create Account' : 'Reset Password'}
+              {mode === 'login' ? 'Welcome back to AURA' : mode === 'register' ? 'Create your AURA account' : mode === 'forgot' ? 'Reset password' : mode === 'emailOtp' ? 'Email OTP' : 'Mobile OTP'}
             </h3>
             <p className="text-xs text-slate-400 mt-1">
-              Access your autonomous AI agents and projects.
+              Your projects, memory, permissions, and quota stay tied to your account.
             </p>
 
             {message && (
@@ -188,7 +173,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 </div>
               </div>
 
-              {mode !== 'forgot' && (
+              {mode !== 'forgot' && mode !== 'emailOtp' && mode !== 'mobileOtp' && (
                 <div>
                   <div className="flex justify-between items-center">
                     <label className="text-[11px] font-semibold text-slate-400 uppercase">Password</label>
@@ -221,21 +206,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 disabled={isLoading}
                 className="w-full mt-2 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 hover:opacity-90 text-white font-bold text-xs shadow-lg shadow-cyan-500/20 flex items-center justify-center gap-2 transition"
               >
-                <span>{isLoading ? 'Authenticating...' : mode === 'login' ? 'Sign In' : mode === 'register' ? 'Create Account' : 'Send Reset Link'}</span>
+                <span>{isLoading ? 'Checking...' : mode === 'login' ? 'Sign In' : mode === 'register' ? 'Create Account' : 'Send Reset Link'}</span>
                 <ArrowRight className="w-3.5 h-3.5" />
               </button>
             </form>
 
-            {/* Quick One-Click Owner Login for testing */}
-            <div className="mt-4 pt-3 border-t border-slate-800">
-              <button
-                type="button"
-                onClick={handleQuickOwnerLogin}
-                className="w-full py-2 px-3 rounded-xl bg-amber-500/10 border border-amber-500/40 hover:bg-amber-500/20 text-amber-300 text-xs font-semibold flex items-center justify-center gap-2 transition"
-              >
-                <Crown className="w-3.5 h-3.5 text-amber-400" />
-                <span>Instant Sign-In as Owner ({ownerEmail})</span>
-              </button>
+            <div className="mt-4 grid grid-cols-2 gap-2 border-t border-slate-800 pt-3">
+              <button type="button" onClick={() => handleProviderAction('/api/auth/google')} className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-slate-900 px-2 py-2 text-[11px] font-semibold text-slate-200 hover:border-cyan-400/50"><Chrome className="h-3.5 w-3.5" /> Google</button>
+              <button type="button" onClick={() => setMode('mobileOtp')} className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-slate-900 px-2 py-2 text-[11px] font-semibold text-slate-200 hover:border-cyan-400/50"><Smartphone className="h-3.5 w-3.5" /> Mobile OTP</button>
+              <button type="button" onClick={() => setMode('emailOtp')} className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-slate-900 px-2 py-2 text-[11px] font-semibold text-slate-200 hover:border-cyan-400/50"><KeyRound className="h-3.5 w-3.5" /> Email OTP</button>
             </div>
           </div>
 

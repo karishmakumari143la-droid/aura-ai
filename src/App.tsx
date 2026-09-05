@@ -3,6 +3,7 @@ import { AuraNavbar, AuraTab } from './components/aura/AuraNavbar';
 import { AuraCore } from './components/aura/AuraCore';
 import { AuraCommandBar } from './components/aura/AuraCommandBar';
 import { AuraConversation, ChatMessage } from './components/aura/AuraConversation';
+import { AuraUniverse } from './components/aura/AuraUniverse';
 import { TaskGraphViewer } from './components/TaskGraphViewer';
 import { AgentWorldView } from './components/AgentWorldView';
 import { WebsiteView } from './components/WebsiteView';
@@ -68,23 +69,14 @@ export default function App() {
   const [showFullConversation, setShowFullConversation] = useState<boolean>(false);
 
   // Chat conversation stream
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: 'welcome-1',
-      sender: 'aura',
-      text: 'AURA AI is active and initialized. I am your intelligent AI partner. You can speak or type any goal—such as creating a high-conversion gym website with WhatsApp CTA, orchestrating parallel development workflows, or configuring automated tasks.',
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      activeAgents: ['AURA', 'SCOUT', 'PIXEL', 'CODE', 'QA'],
-      status: 'completed'
-    }
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   
   // Agents, Permissions & Companion
   const [agents, setAgents] = useState<VirtualAgent[]>([]);
   const [permissions, setPermissions] = useState<ComputerPermissionConfig[]>([]);
   const [tools, setTools] = useState<ToolDefinition[]>([]);
   const [companion, setCompanion] = useState({
-    connected: true,
+    connected: false,
     version: '2.0.0-aura',
     os: 'Linux (Cloud Container Sandbox)',
     hostname: 'aura-node-primary'
@@ -93,17 +85,37 @@ export default function App() {
   // Natural Voice Assistant
   const [isVoiceActive, setIsVoiceActive] = useState<boolean>(false);
   const [isListening, setIsListening] = useState<boolean>(false);
+  const commandInFlightRef = useRef(false);
+  const progressedTasksRef = useRef(new Set<string>());
+  const voiceSessionEnabledRef = useRef(false);
+  const voiceStartInFlightRef = useRef(false);
+  const welcomeShownRef = useRef(false);
 
   // Initialize and fetch user session & state
   useEffect(() => {
     fetchSession();
+  }, []);
+
+  useEffect(() => {
+    if (!currentUser) {
+      setIsAuthOpen(true);
+      return;
+    }
+    if (!welcomeShownRef.current) {
+      welcomeShownRef.current = true;
+      const welcome = navigator.language.toLowerCase().startsWith('hi')
+        ? 'Namaste! Welcome to AURA. Batao, aaj main tumhari kis kaam mein help karun?'
+        : 'Welcome to AURA. I am ready to help. What would you like to work on?';
+      setMessages([{ id: `welcome-${currentUser.id}`, sender: 'aura', text: welcome, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), status: 'completed' }]);
+      speakAuraReply(welcome, 'IDLE', navigator.language.toLowerCase().startsWith('hi') ? 'hi' : 'en');
+    }
     fetchTasks();
     fetchWebsites();
     fetchAgents();
     fetchPermissions();
     fetchTools();
     fetchProjectQuota();
-  }, []);
+  }, [currentUser]);
 
   const fetchSession = async () => {
     try {
@@ -131,9 +143,6 @@ export default function App() {
         const data = await res.json();
         if (data.tasks) {
           setTasksList(data.tasks);
-          if (data.tasks.length > 0 && !currentTask) {
-            setCurrentTask(data.tasks[0]);
-          }
         }
       }
     } catch (err) {
@@ -303,19 +312,12 @@ export default function App() {
     }
   };
 
-  // Voice Interaction Handler
-  const handleToggleVoice = async () => {
-    if (isListening) {
-      speechService.stopListening();
-      setIsListening(false);
-      setIsVoiceActive(false);
-      setOrbState('IDLE');
-    } else {
-      setIsVoiceActive(true);
-      setOrbState('LISTENING');
-      setIsListening(true);
-
-      speechService.startListening({
+  const startVoiceSession = async () => {
+    if (voiceStartInFlightRef.current || isListening) return;
+    voiceStartInFlightRef.current = true;
+    setOrbState('LISTENING');
+    setIsListening(true);
+    const started = await speechService.startListening({
         onResult: (transcript, isFinal) => {
           if (isFinal) {
             setIsListening(false);
@@ -329,28 +331,76 @@ export default function App() {
         onError: (error) => {
           console.warn('Voice error:', error);
           setIsListening(false);
-          setOrbState('IDLE');
+          setIsVoiceActive(false);
+          setOrbState('ERROR');
         },
         onEnd: () => {
           setIsListening(false);
         }
-      });
+    });
+    voiceStartInFlightRef.current = false;
+    setIsVoiceActive(started);
+    if (!started) {
+      voiceSessionEnabledRef.current = false;
+      setIsListening(false);
+      setOrbState('ERROR');
     }
   };
 
+  // Voice Interaction Handler
+  const handleToggleVoice = async () => {
+    if (isListening || voiceSessionEnabledRef.current) {
+      voiceSessionEnabledRef.current = false;
+      speechService.stopListening();
+      speechService.stopSpeaking();
+      setIsListening(false);
+      setIsVoiceActive(false);
+      setOrbState('IDLE');
+    } else {
+      voiceSessionEnabledRef.current = true;
+      await startVoiceSession();
+    }
+  };
+
+  const handleLogout = async () => {
+    voiceSessionEnabledRef.current = false;
+    speechService.stopListening();
+    speechService.stopSpeaking();
+    setIsListening(false);
+    setIsVoiceActive(false);
+    await fetch('/api/auth/logout', { method: 'POST' }).catch(() => undefined);
+    setCurrentUser(null);
+    setCurrentTask(null);
+    setTasksList([]);
+    setMessages([]);
+    welcomeShownRef.current = false;
+    setOrbState('IDLE');
+  };
+
   const speakAuraReply = (text: string, targetStateAfter: AuraState = 'IDLE', lang?: string) => {
-    speechService.speak(
+    const spoken = speechService.speak(
       text,
       () => setOrbState('SPEAKING'),
-      () => setOrbState(targetStateAfter),
+      () => {
+        setOrbState(targetStateAfter);
+        if (voiceSessionEnabledRef.current && !commandInFlightRef.current) {
+          void startVoiceSession();
+        }
+      },
       lang
     );
+    if (!spoken) setOrbState('ERROR');
   };
 
   // Execute Natural Command through AURA Brain DAG Orchestrator
   const handleExecuteCommand = async (command: string, files?: File[]) => {
     if (!command.trim() && (!files || files.length === 0)) return;
+    if (commandInFlightRef.current) return;
+    commandInFlightRef.current = true;
 
+    const commandId = typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `cmd-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const userMsgId = `user-${Date.now()}`;
     const auraMsgId = `aura-${Date.now()}`;
     const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -369,14 +419,11 @@ export default function App() {
     setIsExecuting(true);
     setOrbState('UNDERSTANDING');
 
-    // Create a client-side DAG plan first for instant responsiveness
-    const clientPlan = auraBrain.planCommand(command);
-
     try {
       const res = await fetch('/api/ai/orchestrate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: command })
+        body: JSON.stringify({ prompt: command, commandId })
       });
 
       const contentType = res.headers.get('content-type') || '';
@@ -417,7 +464,7 @@ export default function App() {
 
         speakAuraReply(summaryText, nextState, data.language);
 
-        if (data.task.status === 'WAITING_FOR_USER') {
+        if (data.task.status === 'WAITING_FOR_USER' || data.task.status === 'WAITING_FOR_APPROVAL') {
           setOrbState('ERROR');
         } else if (data.task.status === 'RUNNING') {
           setOrbState('WORKING');
@@ -428,21 +475,28 @@ export default function App() {
             setTimeout(() => setOrbState('IDLE'), 3500);
           }
         }
+      } else if (data && (data.answer || data.summary)) {
+        const responseText = data.answer || data.summary;
+        setMessages(prev => [...prev, {
+          id: auraMsgId,
+          sender: 'aura',
+          text: responseText,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          status: 'completed'
+        }]);
+        speakAuraReply(responseText, 'IDLE', data.language);
       } else {
-        // Fallback with client plan
-        setOrbState('WORKING');
+        setOrbState('ERROR');
         setMessages(prev => [
           ...prev,
           {
             id: auraMsgId,
             sender: 'aura',
-            text: `AURA Cognitive Engine planned 5 parallel tasks. Autonomous agents dispatched.`,
+            text: `AURA could not create an executable task. No work was dispatched.`,
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            activeAgents: ['SCOUT', 'PIXEL', 'CODE'],
-            status: 'completed'
+            status: 'error'
           }
         ]);
-        setTimeout(() => setOrbState('SUCCESS'), 2000);
       }
     } catch (err) {
       console.error('Orchestration error:', err);
@@ -459,11 +513,14 @@ export default function App() {
       ]);
     } finally {
       setIsExecuting(false);
+      commandInFlightRef.current = false;
     }
   };
 
-  // DAG Progression Simulator
+  // Poll the server-owned DAG until it reaches a terminal state.
   const runParallelDAGProgression = async (taskId: string, messageId: string) => {
+    if (progressedTasksRef.current.has(taskId)) return;
+    progressedTasksRef.current.add(taskId);
     for (let i = 0; i < 4; i++) {
       await new Promise(r => setTimeout(r, 1400));
       try {
@@ -485,7 +542,7 @@ export default function App() {
                 websiteUrl: activeWebsite ? `/api/websites/${activeWebsite.id}` : m.websiteUrl
               } : m));
 
-              speakAuraReply('Execution completed successfully. All artifacts verified.');
+              speakAuraReply('Execution completed. The server verified the project artifact.');
               setTimeout(() => setOrbState('IDLE'), 3000);
               break;
             }
@@ -551,25 +608,6 @@ export default function App() {
     }
   };
 
-  const handleSwitchRole = async (role: 'OWNER' | 'FREE_USER') => {
-    try {
-      const res = await fetch('/api/auth/switch-role', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role })
-      });
-      const contentType = res.headers.get('content-type') || '';
-      if (res.ok && contentType.includes('application/json')) {
-        const data = await res.json();
-        if (data.user) {
-          setCurrentUser(data.user);
-        }
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
   if (showLanding) {
     return (
       <LandingPage
@@ -597,8 +635,8 @@ export default function App() {
         onSelectTab={(tab) => setActiveTab(tab)}
         orbState={orbState}
         onToggleVoice={handleToggleVoice}
+        onLogout={handleLogout}
         isVoiceActive={isVoiceActive}
-        onSwitchRole={handleSwitchRole}
         onOpenLanding={() => setShowLanding(true)}
         quota={projectQuota}
         onOpenAllowanceModal={() => setIsAllowanceModalOpen(true)}
@@ -606,197 +644,24 @@ export default function App() {
 
       {/* Main Container */}
       <main className="flex-1 flex flex-col justify-between overflow-y-auto">
-        <div className="max-w-6xl mx-auto w-full px-4 sm:px-6 py-6 flex-1 flex flex-col">
+        <div className={`${activeTab === 'aura' ? 'w-full px-0 py-0' : 'max-w-6xl mx-auto w-full px-4 sm:px-6 py-6'} flex-1 flex flex-col`}>
 
           {/* TAB: AURA (Core Living AI Entity & Command Cockpit) */}
-          {activeTab === 'aura' && (() => {
-            const latestAuraMsg = [...messages].reverse().find(m => m.sender === 'aura');
-            return (
-              <div className="flex-1 flex flex-col items-center justify-start space-y-6 w-full">
-                
-                {/* Header Title & Subtitle */}
-                <div className="text-center pt-1 select-none">
-                  <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-cyan-950/60 border border-cyan-800/80 text-cyan-300 text-xs font-mono mb-2 shadow-sm">
-                    <Sparkles className="w-3.5 h-3.5" />
-                    <span>LIVING AI COGNITIVE CORE</span>
-                  </div>
-                  <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">
-                    AURA Autonomous Operating System
-                  </h1>
-                  <p className="text-xs sm:text-sm text-slate-400 mt-1 max-w-xl mx-auto">
-                    Speaks, understands intent, synthesizes production websites, and delegates multi-agent DAGs.
-                  </p>
-                </div>
-
-                {/* Mode Switch Pill (COMMAND vs WORLD) */}
-                <div className="flex items-center gap-1.5 p-1 rounded-2xl bg-slate-950/80 border border-white/10 shadow-lg">
-                  <button
-                    type="button"
-                    onClick={() => setAuraMode('COMMAND')}
-                    className={`px-4 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
-                      auraMode === 'COMMAND'
-                        ? 'bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/20'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    <Sparkles className="w-3.5 h-3.5" />
-                    <span>AURA LIVING CORE</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAuraMode('WORLD')}
-                    className={`px-4 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
-                      auraMode === 'WORLD'
-                        ? 'bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/20'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    <Layers className="w-3.5 h-3.5" />
-                    <span>2.5D WORLD ENVIRONMENT</span>
-                  </button>
-                </div>
-
-                {/* View Rendering based on Mode */}
-                {auraMode === 'COMMAND' ? (
-                  <div className="w-full flex-1 flex flex-col items-center space-y-6">
-                    {/* Central Living Circular AI Core (Hero Scale) */}
-                    <div className="relative py-1 flex flex-col items-center justify-center">
-                      <AuraCore
-                        state={orbState}
-                        size="hero"
-                        showLabel
-                        onCoreClick={() => {
-                          if (orbState === 'IDLE') setOrbState('THINKING');
-                          else if (orbState === 'THINKING') setOrbState('PLANNING');
-                          else setOrbState('IDLE');
-                        }}
-                      />
-                    </div>
-
-                    {/* AURA Voice / Response Transcript Card directly beneath Core */}
-                    {latestAuraMsg && (
-                      <div className="w-full max-w-2xl px-5 py-4 rounded-3xl bg-slate-950/90 border border-cyan-500/30 backdrop-blur-2xl shadow-2xl animate-in fade-in zoom-in-95 space-y-2">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-mono font-bold text-cyan-400 flex items-center gap-1.5">
-                              <Volume2 className="w-3.5 h-3.5 animate-pulse text-cyan-300" />
-                              AURA TRANSCRIPT
-                            </span>
-                            <span className="text-[10px] text-slate-500 font-mono">{latestAuraMsg.timestamp}</span>
-                          </div>
-                          {latestAuraMsg.websiteUrl && (
-                            <button
-                              type="button"
-                              onClick={() => setActiveTab('projects')}
-                              className="text-[11px] font-bold text-cyan-300 hover:underline flex items-center gap-1"
-                            >
-                              Open Website Preview →
-                            </button>
-                          )}
-                        </div>
-                        <p className="text-sm sm:text-base text-slate-100 font-sans leading-relaxed">
-                          "{latestAuraMsg.text}"
-                        </p>
-                        {latestAuraMsg.activeAgents && latestAuraMsg.activeAgents.length > 0 && (
-                          <div className="flex items-center gap-1.5 pt-1 text-[10px] font-mono text-slate-400 flex-wrap">
-                            <span>Specialists Assigned:</span>
-                            {latestAuraMsg.activeAgents.map((ag: string) => (
-                              <span key={ag} className="px-2 py-0.5 rounded-lg bg-slate-900 border border-white/10 text-cyan-300 font-bold">
-                                {ag}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Floating Voice & Command Bar directly beneath Core & Transcript */}
-                    <div className="w-full max-w-3xl">
-                      <AuraCommandBar
-                        onExecuteCommand={handleExecuteCommand}
-                        isExecuting={isExecuting}
-                        orbState={orbState}
-                        onMicToggle={handleToggleVoice}
-                        isListening={isListening}
-                      />
-                    </div>
-
-                    {/* Active Task Progress Banner if a task is running */}
-                    {currentTask && (
-                      <div className="w-full max-w-3xl p-3.5 rounded-2xl bg-slate-950/90 border border-cyan-500/30 backdrop-blur-xl flex items-center justify-between shadow-xl animate-in fade-in">
-                        <div className="flex items-center gap-3">
-                          <div className="p-2 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400">
-                            <Cpu className="w-4 h-4 animate-pulse" />
-                          </div>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs font-bold text-white">{currentTask.title}</span>
-                              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800 uppercase">
-                                {currentTask.status}
-                              </span>
-                            </div>
-                            <p className="text-[11px] text-slate-400">
-                              Parallel DAG with {currentTask.nodes?.length || 0} nodes running across specialized agents.
-                            </p>
-                          </div>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => setShowTaskGraphModal(!showTaskGraphModal)}
-                          className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-cyan-300 text-xs font-bold border border-white/10 transition flex items-center gap-1.5"
-                        >
-                          <Layers className="w-3.5 h-3.5" />
-                          <span>{showTaskGraphModal ? 'Hide Graph' : 'Inspect DAG'}</span>
-                        </button>
-                      </div>
-                    )}
-
-                    {/* Optional Task Graph Expandable Drawer */}
-                    {currentTask && showTaskGraphModal && (
-                      <div className="w-full max-w-4xl animate-in zoom-in-95 duration-200">
-                        <TaskGraphViewer
-                          task={currentTask}
-                          onAdvanceStep={handleAdvanceStep}
-                          onApprove={handleApprove}
-                          onReject={handleReject}
-                          onViewWebsite={() => setActiveTab('projects')}
-                        />
-                      </div>
-                    )}
-
-                    {/* Collapsible Full Neural Conversation History Drawer */}
-                    <div className="w-full max-w-3xl flex flex-col items-center pt-2 pb-6">
-                      <button
-                        type="button"
-                        onClick={() => setShowFullConversation(!showFullConversation)}
-                        className="inline-flex items-center gap-2 px-4 py-2 rounded-2xl bg-slate-950/80 hover:bg-slate-900 border border-white/10 text-xs font-mono text-slate-400 hover:text-white transition shadow-sm"
-                      >
-                        <MessageSquare className="w-3.5 h-3.5 text-cyan-400" />
-                        <span>{showFullConversation ? 'Hide Conversation History' : `View Full Conversation History (${messages.length})`}</span>
-                        {showFullConversation ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                      </button>
-
-                      {showFullConversation && (
-                        <div className="w-full mt-4 animate-in fade-in duration-300">
-                          <AuraConversation
-                            messages={messages}
-                            currentTask={currentTask}
-                            onOpenWebsitePreview={() => setActiveTab('projects')}
-                          />
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ) : (
-                  /* 2.5D Digital Workspace World */
-                  <div className="w-full space-y-4 animate-in fade-in duration-300">
-                    <AgentWorldView agents={agents} />
-                  </div>
-                )}
-              </div>
-            );
-          })()}
+          {activeTab === 'aura' && (
+            <AuraUniverse
+              state={orbState}
+              agents={agents}
+              currentTask={currentTask}
+              messages={messages}
+              quota={projectQuota}
+              isExecuting={isExecuting}
+              isListening={isListening}
+              onExecuteCommand={handleExecuteCommand}
+              onMicToggle={handleToggleVoice}
+              onSelectTab={(tab) => setActiveTab(tab)}
+              onInspectTask={() => setShowTaskGraphModal(true)}
+            />
+          )}
 
           {/* TAB: WORK (Dedicated Task DAG Graph & Execution History) */}
           {activeTab === 'work' && (
@@ -947,20 +812,10 @@ export default function App() {
           )}
 
           {/* TAB: OWNER (Restricted Panel) */}
-          {activeTab === 'owner' && (
+          {activeTab === 'owner' && currentUser && (
             <div className="space-y-6">
               <OwnerConsole
-                currentUser={currentUser || {
-                  id: 'owner-default',
-                  name: 'Owner',
-                  email: ownerEmail,
-                  role: 'OWNER',
-                  isOwner: true,
-                  subscriptionPlan: 'ENTERPRISE',
-                  subscriptionStatus: 'active',
-                  createdAt: new Date().toISOString()
-                }}
-                onSwitchRole={(role) => handleSwitchRole(role === 'OWNER' ? 'OWNER' : 'FREE_USER')}
+                currentUser={currentUser}
               />
             </div>
           )}
@@ -985,7 +840,6 @@ export default function App() {
         isOpen={isAuthOpen}
         onClose={() => setIsAuthOpen(false)}
         onLoginSuccess={(user) => setCurrentUser(user)}
-        ownerEmail={ownerEmail}
       />
 
       <PricingModal

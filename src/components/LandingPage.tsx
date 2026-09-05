@@ -22,6 +22,7 @@ import {
   ShieldCheck
 } from 'lucide-react';
 import { AuraCore } from './aura/AuraCore';
+import { AuraLogo } from './aura/AuraLogo';
 import { AuraState } from '../types';
 
 interface LandingPageProps {
@@ -94,7 +95,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               <span className="text-cyan-400 font-extrabold text-xs">AI</span>
             </div>
           </div>
-          <span className="font-extrabold text-base tracking-wider text-white">AURA <span className="text-cyan-400">AI</span></span>
+            <AuraLogo size={34} />
         </div>
 
         <div className="hidden md:flex items-center gap-7 text-xs font-medium text-slate-300">
@@ -327,7 +328,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               </li>
               <li className="flex items-center gap-2">
                 <Check className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span><strong>Full 21 Specialist Agents</strong> running parallel topological DAGs</span>
+                <span><strong>Multi-agent execution</strong> with task planning and verification</span>
               </li>
               <li className="flex items-center gap-2">
                 <Check className="w-4 h-4 text-emerald-400 shrink-0" />

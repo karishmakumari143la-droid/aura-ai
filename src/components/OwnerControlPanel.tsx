@@ -137,7 +137,7 @@ export const OwnerControlPanel: React.FC<OwnerControlPanelProps> = ({ onClose })
             <Activity className="w-4 h-4 text-cyan-400" />
           </div>
           <p className="text-2xl font-extrabold text-cyan-300">OPERATIONAL</p>
-          <span className="text-[10px] text-slate-400 font-mono">Gemini 3.8 Flash Cluster</span>
+          <span className="text-[10px] text-slate-400 font-mono">AURA Intelligence Core</span>
         </div>
       </div>
 

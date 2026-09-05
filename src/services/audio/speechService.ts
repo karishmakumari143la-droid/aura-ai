@@ -6,6 +6,8 @@ export interface SpeechRecognitionHandlers {
   onEnd?: () => void;
 }
 
+export type SpeechLanguage = 'en' | 'hi' | 'hinglish';
+
 class SpeechService {
   private recognition: any = null;
   private isListening = false;
@@ -19,7 +21,7 @@ class SpeechService {
         this.recognition = new SpeechRec();
         this.recognition.continuous = false;
         this.recognition.interimResults = true;
-        this.recognition.lang = 'en-US';
+        this.recognition.lang = navigator.language.toLowerCase().startsWith('hi') ? 'hi-IN' : 'en-IN';
       }
     }
   }
@@ -30,6 +32,11 @@ class SpeechService {
 
   public isSynthesisSupported(): boolean {
     return typeof window !== 'undefined' && 'speechSynthesis' in window;
+  }
+
+  public setRecognitionLanguage(language: SpeechLanguage): void {
+    if (!this.recognition) return;
+    this.recognition.lang = language === 'hi' ? 'hi-IN' : language === 'hinglish' ? 'en-IN' : 'en-US';
   }
 
   // Start voice listening
@@ -104,11 +111,14 @@ class SpeechService {
     onStart?: () => void, 
     onEnd?: () => void,
     lang?: string
-  ): void {
+  ): boolean {
     if (!this.isSynthesisSupported()) {
       onEnd?.();
-      return;
+      return false;
     }
+
+    // Recognition is paused before TTS so AURA cannot route its own voice back into the brain.
+    this.stopListening();
 
     // Cancel ongoing speech
     window.speechSynthesis.cancel();
@@ -122,7 +132,7 @@ class SpeechService {
 
     if (!plainText) {
       onEnd?.();
-      return;
+      return false;
     }
 
     const utterance = new SpeechSynthesisUtterance(plainText.slice(0, 300)); // vocalize initial conversational summary
@@ -131,6 +141,7 @@ class SpeechService {
 
     const voices = window.speechSynthesis.getVoices();
     const isHindi = lang === 'hi' || /[\u0900-\u097F]/.test(plainText);
+    const isHinglish = lang === 'hinglish';
 
     if (isHindi) {
       utterance.lang = 'hi-IN';
@@ -139,6 +150,7 @@ class SpeechService {
         utterance.voice = hiVoice;
       }
     } else {
+      utterance.lang = isHinglish ? 'en-IN' : 'en-US';
       // Pick best futuristic sounding or natural voice if available
       const preferredVoice = voices.find(v => 
         v.name.includes('Google') || 
@@ -170,6 +182,7 @@ class SpeechService {
     };
 
     window.speechSynthesis.speak(utterance);
+    return true;
   }
 
   public stopSpeaking(): void {

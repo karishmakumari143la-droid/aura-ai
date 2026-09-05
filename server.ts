@@ -4,6 +4,8 @@ import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 import { createServer as createViteServer } from 'vite';
+import { AsyncLocalStorage } from 'async_hooks';
+import { randomBytes, scryptSync, timingSafeEqual } from 'crypto';
 import { 
   User, 
   Task, 
@@ -20,6 +22,7 @@ import {
   ComputerPermissionType,
   PermissionState
 } from './src/types';
+import { classifyIntent, detectLanguage as detectConversationLanguage, isExplicitAction as detectExplicitAction } from './src/services/ai/intent';
 
 dotenv.config();
 
@@ -27,7 +30,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = 3000;
-const OWNER_EMAIL = (process.env.OWNER_EMAIL || 'karishmakumari143la@gmail.com').toLowerCase().trim();
+const OWNER_EMAIL = (process.env.OWNER_EMAIL || '').toLowerCase().trim();
 
 // Initialize Gemini SDK securely on server side
 const apiKey = process.env.GEMINI_API_KEY;
@@ -52,7 +55,7 @@ if (apiKey && apiKey !== 'MY_GEMINI_API_KEY') {
 // USER STORE (Authentication & Roles)
 // -------------------------------------------------------------
 const users: User[] = [
-  {
+  ...(OWNER_EMAIL ? [{
     id: 'usr-owner',
     email: OWNER_EMAIL,
     name: 'Karishma Kumari (Owner)',
@@ -61,29 +64,57 @@ const users: User[] = [
     subscriptionStatus: 'active',
     createdAt: new Date().toISOString(),
     isOwner: true
-  },
-  {
-    id: 'usr-dev-1',
-    email: 'alex.founder@auratech.io',
-    name: 'Alex Rivera',
-    role: 'FREE_USER',
-    subscriptionPlan: 'FREE',
-    subscriptionStatus: 'active',
-    createdAt: new Date(Date.now() - 86400000 * 5).toISOString(),
-    isOwner: false
-  }
+  } as User] : [])
 ];
 
-let currentUser: User = users[0]; // Defaults to Owner session
+const credentials = new Map<string, string>();
+const sessions = new Map<string, string>();
+const requestUser = new AsyncLocalStorage<User>();
+const fallbackUser = users[0];
+if (OWNER_EMAIL && process.env.OWNER_PASSWORD) {
+  const owner = users.find(user => user.email === OWNER_EMAIL);
+  if (owner) credentials.set(owner.id, hashPassword(process.env.OWNER_PASSWORD));
+}
+
+function hashPassword(password: string, salt = randomBytes(16).toString('hex')): string {
+  return `${salt}:${scryptSync(password, salt, 64).toString('hex')}`;
+}
+
+function verifyPassword(password: string, storedHash: string): boolean {
+  const [salt, hash] = storedHash.split(':');
+  if (!salt || !hash) return false;
+  const expected = Buffer.from(hash, 'hex');
+  const actual = scryptSync(password, salt, expected.length);
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+
+function setSession(res: Response, user: User): void {
+  const token = randomBytes(32).toString('hex');
+  sessions.set(token, user.id);
+  res.setHeader('Set-Cookie', `aura_session=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800`);
+}
+
+function getSessionUser(req: Request): User | undefined {
+  const cookieHeader = req.headers.cookie || '';
+  const token = cookieHeader.split(';').map(cookie => cookie.trim()).find(cookie => cookie.startsWith('aura_session='))?.split('=')[1];
+  const userId = token ? sessions.get(token) : undefined;
+  return users.find(user => user.id === userId);
+}
+
+function getAuthenticatedUser(): User {
+  const user = requestUser.getStore();
+  if (!user) throw new Error('Authenticated user is not available for this request');
+  return user;
+}
 
 // -------------------------------------------------------------
 // VIRTUAL AGENT REGISTRY (5 Core Working Agents + Expansion)
 // -------------------------------------------------------------
 const initialAgents: VirtualAgent[] = [
   {
-    id: 'agent-aether',
-    name: 'AETHER',
-    code: 'AETHER',
+    id: 'agent-aura',
+    name: 'AURA',
+    code: 'AURA',
     role: 'Central AI Orchestrator & Decomposer',
     category: 'core',
     stationId: 'station-command',
@@ -256,7 +287,7 @@ const localCompanionState = {
   connected: false,
   version: '1.2.0-preview',
   os: 'Linux (Cloud Container Sandbox)',
-  hostname: 'aether-node-primary',
+  hostname: 'aura-node-primary',
   lastPing: null as string | null
 };
 
@@ -308,7 +339,7 @@ const toolRegistry: ToolDefinition[] = [
     requiredPermission: 'FILES_WRITE',
     status: 'SETUP_REQUIRED',
     isLocalOnly: true,
-    details: 'Requires Local Aether Companion running on desktop'
+    details: 'Requires Local AURA Companion running on desktop'
   },
   {
     name: 'browserAutomationTool',
@@ -330,7 +361,7 @@ const memoryDatabase: MemoryItem[] = [
     memoryId: 'mem-001',
     userId: 'usr-owner',
     category: 'BRAND_GUIDELINES',
-    title: 'Aether Dark Futuristic Palette',
+    title: 'AURA Dark Futuristic Palette',
     content: 'All user interfaces must default to dark palette (#06080D background, slate cards, subtle cyan/purple highlights).',
     source: 'system_default',
     importance: 'high',
@@ -578,10 +609,14 @@ const activeContext = {
   lastAction: ''
 };
 
+function responseForLanguage(language: 'hi' | 'en' | 'hinglish', english: string, hinglish: string, hindi: string): string {
+  return language === 'hi' ? hindi : language === 'hinglish' ? hinglish : english;
+}
+
 // -------------------------------------------------------------
 // INITIAL MULTI-AGENT DAG TASK STORE
 // -------------------------------------------------------------
-const tasks: Task[] = [
+const demoTasks: Task[] = [
   {
     taskId: 'tsk-001',
     userId: 'usr-owner',
@@ -661,13 +696,43 @@ const tasks: Task[] = [
     updatedAt: new Date().toISOString(),
     result: 'Vanguard Fitness project compiled successfully with zero syntax warnings and verified mobile responsiveness.',
     logs: [
-      '[AETHER] Deconstructed command into DAG with 2 parallel branches at Level 0',
+      '[AURA] Deconstructed command into 2 parallel branches at Level 0',
       '[SCOUT + PIXEL] Executed simultaneously in parallel',
       '[CODE] Succeeded upon receiving outputs from node-1 and node-2',
       '[QA] Verified accessibility and DOM readiness'
     ]
   }
 ];
+
+// Live task history starts empty. Development fixtures stay isolated from user activity.
+const tasks: Task[] = [];
+const commandTaskIndex = new Map<string, string>();
+const conversationContexts = new Map<string, {
+  language: 'hi' | 'en' | 'hinglish';
+  activeWebsiteId?: string;
+  websiteBusiness?: WebsiteProject['category'];
+  websiteName?: string;
+  websiteRequirements?: string[];
+  lastUserMessage?: string;
+  lastAuraResponse?: string;
+  pendingClarification?: 'website_business' | 'website_name' | 'website_features';
+}>();
+
+function storeTask(task: Task, commandId: string): Task {
+  task.commandId = commandId;
+  tasks.unshift(task);
+  commandTaskIndex.set(`${task.userId}:${commandId}`, task.taskId);
+  return task;
+}
+
+function getConversationContext(userId: string) {
+  let context = conversationContexts.get(userId);
+  if (!context) {
+    context = { language: 'en' as const };
+    conversationContexts.set(userId, context);
+  }
+  return context;
+}
 
 // Helper: Retrieve relevant memory items based on search terms
 function getRelevantMemories(prompt: string): MemoryItem[] {
@@ -677,6 +742,24 @@ function getRelevantMemories(prompt: string): MemoryItem[] {
     const contentMatch = m.content.toLowerCase().split(' ').some(w => w.length > 4 && lower.includes(w));
     return titleMatch || contentMatch || m.importance === 'high';
   });
+}
+
+function verifyWebsiteProject(project: WebsiteProject | undefined): { ok: boolean; detail: string } {
+  if (!project) {
+    return { ok: false, detail: 'No project artifact is attached to this task.' };
+  }
+
+  const requiredFields = [project.name, project.slug, project.headline, project.description];
+  const hasRequiredFields = requiredFields.every(field => typeof field === 'string' && field.trim().length > 0);
+  const hasPricing = Array.isArray(project.pricing) && project.pricing.length > 0;
+  const hasSections = Array.isArray(project.sections) && project.sections.length > 0;
+  const hasSeo = Boolean(project.seo?.metaTitle && project.seo?.metaDescription && project.seo.keywords.length > 0);
+
+  if (!hasRequiredFields || !hasPricing || !hasSections || !hasSeo) {
+    return { ok: false, detail: 'Project artifact failed required content and SEO checks.' };
+  }
+
+  return { ok: true, detail: 'Project artifact passed required content, sections, pricing, and SEO checks.' };
 }
 
 // -------------------------------------------------------------
@@ -689,8 +772,16 @@ async function startServer() {
   // Basic API request logger
   app.use((req, res, next) => {
     if (req.path.startsWith('/api')) {
-      console.log(`[AETHER OS] ${req.method} ${req.path}`);
+      console.log(`[AURA AI] ${req.method} ${req.path}`);
     }
+    next();
+  });
+
+  app.use('/api', (req: Request, res: Response, next) => {
+    if (req.path.startsWith('/auth')) return next();
+    const sessionUser = getSessionUser(req);
+    if (!sessionUser) return res.status(401).json({ error: 'Authentication required' });
+    currentUser = sessionUser;
     next();
   });
 
@@ -698,93 +789,163 @@ async function startServer() {
   // 1. AUTHENTICATION & USER MANAGEMENT
   // ===========================================================
   app.get('/api/auth/me', (req: Request, res: Response) => {
+    const sessionUser = getSessionUser(req);
     res.json({
-      user: currentUser,
-      ownerEmail: OWNER_EMAIL,
-      isOwner: currentUser.role === 'OWNER'
+      user: sessionUser || null,
+      isOwner: sessionUser?.role === 'OWNER'
     });
   });
 
   app.post('/api/auth/login', (req: Request, res: Response) => {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ error: 'Email is required' });
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
 
     const cleanEmail = email.toLowerCase().trim();
-    let user = users.find(u => u.email.toLowerCase() === cleanEmail);
-
-    if (!user) {
-      const isOwner = cleanEmail === OWNER_EMAIL;
-      user = {
-        id: 'usr-' + Math.random().toString(36).substr(2, 9),
-        email: cleanEmail,
-        name: cleanEmail.split('@')[0],
-        role: isOwner ? 'OWNER' : 'FREE_USER',
-        subscriptionPlan: isOwner ? 'ENTERPRISE' : 'FREE',
-        subscriptionStatus: 'active',
-        createdAt: new Date().toISOString(),
-        isOwner
-      };
-      users.push(user);
+    const user = users.find(candidate => candidate.email.toLowerCase() === cleanEmail);
+    const storedHash = user ? credentials.get(user.id) : undefined;
+    if (!user || !storedHash || !verifyPassword(password, storedHash)) {
+      return res.status(401).json({ error: 'Invalid email or password' });
     }
-
     currentUser = user;
-    res.json({ user: currentUser });
+    setSession(res, user);
+    return res.json({ user });
   });
 
   app.post('/api/auth/register', (req: Request, res: Response) => {
-    const { email, name } = req.body;
-    if (!email || !name) return res.status(400).json({ error: 'Name and email are required' });
+    const { email, name, password } = req.body;
+    if (!email || !name || !password || password.length < 8) return res.status(400).json({ error: 'Name, email, and a password of at least 8 characters are required' });
 
     const cleanEmail = email.toLowerCase().trim();
     const existing = users.find(u => u.email.toLowerCase() === cleanEmail);
     if (existing) {
-      currentUser = existing;
-      return res.json({ user: currentUser, message: 'Existing account logged in' });
+      return res.status(409).json({ error: 'An account with this email already exists' });
     }
 
-    const isOwner = cleanEmail === OWNER_EMAIL;
     const newUser: User = {
       id: 'usr-' + Math.random().toString(36).substr(2, 9),
       email: cleanEmail,
       name,
-      role: isOwner ? 'OWNER' : 'FREE_USER',
-      subscriptionPlan: isOwner ? 'ENTERPRISE' : 'FREE',
+      role: 'FREE_USER',
+      subscriptionPlan: 'FREE',
       subscriptionStatus: 'active',
       createdAt: new Date().toISOString(),
-      isOwner
+      isOwner: false
     };
     users.push(newUser);
+    credentials.set(newUser.id, hashPassword(password));
     currentUser = newUser;
-    res.status(201).json({ user: currentUser });
+    setSession(res, newUser);
+    return res.status(201).json({ user: newUser });
   });
 
-  app.post('/api/auth/switch-role', (req: Request, res: Response) => {
-    const { role } = req.body;
-    if (role === 'OWNER') {
-      currentUser = users.find(u => u.role === 'OWNER') || users[0];
-    } else {
-      currentUser = users.find(u => u.role === 'FREE_USER') || users[1] || users[0];
-    }
-    res.json({ user: currentUser });
+  app.post('/api/auth/logout', (req: Request, res: Response) => {
+    const cookieHeader = req.headers.cookie || '';
+    const token = cookieHeader.split(';').map(cookie => cookie.trim()).find(cookie => cookie.startsWith('aura_session='))?.split('=')[1];
+    if (token) sessions.delete(token);
+    res.setHeader('Set-Cookie', 'aura_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0');
+    return res.json({ user: null });
   });
 
   app.post('/api/auth/forgot-password', (req: Request, res: Response) => {
-    const { email } = req.body;
-    res.json({
-      success: true,
-      message: `Password reset instructions dispatched to ${email || 'your registered email'}.`
-    });
+    return res.status(501).json({ error: 'PASSWORD_RESET_SETUP_REQUIRED', message: 'Password reset email delivery is not configured on this server.' });
   });
+
+  app.post('/api/auth/google', (_req: Request, res: Response) => res.status(501).json({ error: 'GOOGLE_AUTH_SETUP_REQUIRED', message: 'Google OAuth is not configured on this server.' }));
+  app.post('/api/auth/email-otp', (_req: Request, res: Response) => res.status(501).json({ error: 'EMAIL_OTP_SETUP_REQUIRED', message: 'Email OTP delivery is not configured on this server.' }));
+  app.post('/api/auth/mobile-otp', (_req: Request, res: Response) => res.status(501).json({ error: 'MOBILE_OTP_SETUP_REQUIRED', message: 'Mobile OTP delivery is not configured on this server.' }));
 
   // ===========================================================
   // 2. AURA BRAIN: CENTRAL ORCHESTRATOR & PARALLEL DAG ENGINE
   // ===========================================================
   app.post('/api/ai/orchestrate', async (req: Request, res: Response) => {
-    const { prompt } = req.body;
+    const { prompt, commandId } = req.body;
     if (!prompt) return res.status(400).json({ error: 'Command prompt is required' });
+    if (!commandId || typeof commandId !== 'string') return res.status(400).json({ error: 'commandId is required' });
+
+    const commandKey = `${currentUser.id}:${commandId}`;
+    const existingTaskId = commandTaskIndex.get(commandKey);
+    if (existingTaskId === '__pending__') return res.status(409).json({ error: 'Command is already being processed', commandId });
+    if (existingTaskId) {
+      const existingTask = tasks.find(task => task.taskId === existingTaskId);
+      if (existingTask) return res.json({ task: existingTask, summary: 'This command was already accepted; returning its existing task.', language: activeContext.language });
+    }
+    commandTaskIndex.set(commandKey, '__pending__');
 
     const lowerPrompt = prompt.toLowerCase().trim();
+    const conversationContext = getConversationContext(currentUser.id);
+    conversationContext.language = detectConversationLanguage(prompt);
+    conversationContext.lastUserMessage = prompt;
+    activeContext.language = conversationContext.language;
     const relevantMemories = getRelevantMemories(prompt);
+
+    if (conversationContext.pendingClarification === 'website_business' && /^(gym|restaurant|salon|portfolio|agency|ecommerce|real estate|real-estate)\b/i.test(lowerPrompt)) {
+      commandTaskIndex.delete(commandKey);
+      const category = lowerPrompt.includes('restaurant') ? 'restaurant' : lowerPrompt.includes('salon') ? 'salon' : lowerPrompt.includes('portfolio') ? 'portfolio' : lowerPrompt.includes('agency') ? 'agency' : lowerPrompt.includes('real') ? 'real-estate' : 'gym';
+      conversationContext.websiteBusiness = category;
+      conversationContext.pendingClarification = 'website_name';
+      const answer = responseForLanguage(activeContext.language, `${category[0].toUpperCase() + category.slice(1)} website. What should I call the project?`, `${category[0].toUpperCase() + category.slice(1)} website. Iska naam kya rakhein?`, `${category[0].toUpperCase() + category.slice(1)} वेबसाइट का नाम क्या रखें?`);
+      conversationContext.lastAuraResponse = answer;
+      return res.json({ task: null, answer, summary: 'Business type saved; project name requested.', language: activeContext.language, auraState: 'SPEAKING' });
+    }
+
+    if (conversationContext.pendingClarification === 'website_name' && prompt.trim().length > 1 && prompt.trim().length < 80 && !detectExplicitAction(prompt)) {
+      commandTaskIndex.delete(commandKey);
+      conversationContext.websiteName = prompt.trim();
+      conversationContext.pendingClarification = 'website_features';
+      const answer = responseForLanguage(activeContext.language, `Nice. What should the ${prompt.trim()} website include: just the website, or WhatsApp booking too?`, `Nice. ${prompt.trim()} ke liye sirf website chahiye ya WhatsApp booking bhi?`, `बहुत अच्छा। ${prompt.trim()} वेबसाइट में केवल वेबसाइट चाहिए या WhatsApp बुकिंग भी?`);
+      conversationContext.lastAuraResponse = answer;
+      return res.json({ task: null, answer, summary: 'Project name saved; requirements requested.', language: activeContext.language, auraState: 'SPEAKING' });
+    }
+
+    if (conversationContext.pendingClarification === 'website_features' && /whatsapp|booking/i.test(lowerPrompt)) {
+      commandTaskIndex.delete(commandKey);
+      conversationContext.websiteRequirements = [...new Set([...(conversationContext.websiteRequirements || []), 'whatsapp'])];
+      const answer = responseForLanguage(activeContext.language, 'Got it. WhatsApp booking is included. Shall I create the website now?', 'Got it. WhatsApp booking bhi include karte hain. Ab website bana doon?', 'समझ गया। WhatsApp बुकिंग शामिल है। क्या अब वेबसाइट बनाऊँ?');
+      conversationContext.lastAuraResponse = answer;
+      return res.json({ task: null, answer, summary: 'Requirements saved; waiting for confirmation.', language: activeContext.language, auraState: 'SPEAKING' });
+    }
+
+    const isPendingWebsiteConfirmation = conversationContext.pendingClarification === 'website_features' && /\b(haan|yes|okay|ok|bana do|create it|go ahead)\b/i.test(lowerPrompt);
+
+    const intentMode = classifyIntent(prompt);
+    const isCasualConversation = intentMode === 'CONVERSATION';
+    if (!isPendingWebsiteConfirmation && (intentMode === 'CONVERSATION' || intentMode === 'QUESTION')) {
+      commandTaskIndex.delete(commandKey);
+      const answer = isCasualConversation
+        ? responseForLanguage(activeContext.language, "I'm good and ready to help. What are we working on today?", 'Main bilkul ready hoon. Batao, aaj kya karna hai?', 'मैं तैयार हूँ। बताइए, आज क्या करना है?')
+        : responseForLanguage(activeContext.language, 'I can explain that from the available project context and configured tools.', 'Main available project context aur configured tools ke basis par samjha sakti hoon.', 'मैं उपलब्ध प्रोजेक्ट संदर्भ और configured tools के आधार पर समझा सकती हूँ।');
+      conversationContext.lastAuraResponse = answer;
+      return res.json({
+        task: null,
+        answer,
+        summary: 'Conversation answered without creating an execution task.',
+        language: activeContext.language,
+        auraState: 'SPEAKING'
+      });
+    }
+
+    const isIncompleteWebsiteRequest = intentMode === 'CLARIFICATION';
+    if (isIncompleteWebsiteRequest) {
+      commandTaskIndex.delete(commandKey);
+      conversationContext.pendingClarification = 'website_business';
+      const answer = responseForLanguage(activeContext.language, 'Sure. What kind of business is the website for?', 'Bilkul. Kis business ke liye website banani hai?', 'बिल्कुल। वेबसाइट किस व्यवसाय के लिए बनानी है?');
+      conversationContext.lastAuraResponse = answer;
+      return res.json({
+        task: null,
+        answer,
+        summary: 'Clarification requested before creating an execution task.',
+        language: activeContext.language,
+        auraState: 'SPEAKING'
+      });
+    }
+
+    const confirmingWebsitePlan = conversationContext.pendingClarification === 'website_features' && /\b(haan|yes|okay|ok|bana do|create it|go ahead|whatsapp|booking)\b/i.test(lowerPrompt);
+    if (conversationContext.pendingClarification === 'website_features' && /whatsapp|booking/i.test(lowerPrompt)) {
+      conversationContext.websiteRequirements = [...new Set([...(conversationContext.websiteRequirements || []), 'whatsapp'])];
+    }
+    if (confirmingWebsitePlan) {
+      conversationContext.pendingClarification = undefined;
+    }
 
     // -------------------------------------------------------------
     // HIGH-ACCURACY NATURAL SCENARIO RECOGNIZERS (AURA LIVING COMPANION)
@@ -820,7 +981,7 @@ async function startServer() {
         updatedAt: new Date().toISOString(),
         logs: [`[${new Date().toLocaleTimeString()}] AURA AI online and responsive.`]
       };
-      tasks.unshift(greetingTask);
+      storeTask(greetingTask, commandId);
       return res.json({
         task: greetingTask,
         understanding,
@@ -862,7 +1023,7 @@ async function startServer() {
         updatedAt: new Date().toISOString(),
         logs: [`[${new Date().toLocaleTimeString()}] Switched conversational voice to Hindi.`]
       };
-      tasks.unshift(langTask);
+      storeTask(langTask, commandId);
       return res.json({
         task: langTask,
         understanding,
@@ -904,7 +1065,7 @@ async function startServer() {
         updatedAt: new Date().toISOString(),
         logs: [`[${new Date().toLocaleTimeString()}] Switched conversational voice to English.`]
       };
-      tasks.unshift(langTask);
+      storeTask(langTask, commandId);
       return res.json({
         task: langTask,
         understanding,
@@ -949,7 +1110,7 @@ async function startServer() {
         updatedAt: new Date().toISOString(),
         logs: [`[${new Date().toLocaleTimeString()}] Active project context set to "${restSite.name}".`]
       };
-      tasks.unshift(openTask);
+      storeTask(openTask, commandId);
       return res.json({
         task: openTask,
         understanding,
@@ -1011,7 +1172,7 @@ async function startServer() {
         updatedAt: new Date().toISOString(),
         logs: [`[${new Date().toLocaleTimeString()}] Design tokens upgraded to Obsidian Dark Luxury.`]
       };
-      tasks.unshift(designTask);
+      storeTask(designTask, commandId);
       return res.json({
         task: designTask,
         understanding,
@@ -1061,7 +1222,7 @@ async function startServer() {
         updatedAt: new Date().toISOString(),
         logs: [`[${new Date().toLocaleTimeString()}] Pricing tier calibrated to ${targetPrice}.`]
       };
-      tasks.unshift(priceTask);
+      storeTask(priceTask, commandId);
       return res.json({
         task: priceTask,
         understanding,
@@ -1104,7 +1265,7 @@ async function startServer() {
         updatedAt: new Date().toISOString(),
         logs: [`[${new Date().toLocaleTimeString()}] AURA shifted to Empathy state.`]
       };
-      tasks.unshift(empathyTask);
+      storeTask(empathyTask, commandId);
       return res.json({
         task: empathyTask,
         understanding,
@@ -1177,7 +1338,7 @@ async function startServer() {
         updatedAt: new Date().toISOString(),
         logs: [`[${new Date().toLocaleTimeString()}] Structured daily roadmap created.`]
       };
-      tasks.unshift(planTask);
+      storeTask(planTask, commandId);
       return res.json({
         task: planTask,
         understanding,
@@ -1249,7 +1410,7 @@ async function startServer() {
         updatedAt: new Date().toISOString(),
         logs: [`[${new Date().toLocaleTimeString()}] Launched SCOUT and PIXEL simultaneously in parallel.`]
       };
-      tasks.unshift(parallelTask);
+      storeTask(parallelTask, commandId);
       return res.json({
         task: parallelTask,
         understanding,
@@ -1290,7 +1451,7 @@ async function startServer() {
         updatedAt: new Date().toISOString(),
         logs: [`[${new Date().toLocaleTimeString()}] Notification listener configured.`]
       };
-      tasks.unshift(alertTask);
+      storeTask(alertTask, commandId);
       return res.json({
         task: alertTask,
         understanding,
@@ -1348,7 +1509,7 @@ async function startServer() {
         updatedAt: new Date().toISOString(),
         logs: [`[${new Date().toLocaleTimeString()}] Saved preference into long-term memory.`]
       };
-      tasks.unshift(memTask);
+      storeTask(memTask, commandId);
       return res.json({
         task: memTask,
         understanding,
@@ -1405,7 +1566,7 @@ async function startServer() {
         updatedAt: new Date().toISOString(),
         logs: [`[${new Date().toLocaleTimeString()}] Chrome sandbox GitHub inspection complete.`]
       };
-      tasks.unshift(chromeTask);
+      storeTask(chromeTask, commandId);
       return res.json({
         task: chromeTask,
         understanding,
@@ -1463,7 +1624,7 @@ async function startServer() {
         updatedAt: new Date().toISOString(),
         logs: [`[${new Date().toLocaleTimeString()}] Mobile layout calibrated and verified.`]
       };
-      tasks.unshift(mobileTask);
+      storeTask(mobileTask, commandId);
       return res.json({
         task: mobileTask,
         understanding,
@@ -1475,7 +1636,7 @@ async function startServer() {
     }
 
     // -------------------------------------------------------------
-    // GENERAL & DEEP TASK DECOMPOSITION (GEMINI 3.8 / FALLBACK)
+    // GENERAL & DEEP TASK DECOMPOSITION (provider / fallback)
     // -------------------------------------------------------------
     
     // Check if task is sensitive and requires human sign-off
@@ -1486,7 +1647,7 @@ async function startServer() {
                         lowerPrompt.includes('format drive') ||
                         lowerPrompt.includes('mass message');
 
-    let detectedCategory: WebsiteProject['category'] = 'gym';
+    let detectedCategory: WebsiteProject['category'] = conversationContext.websiteBusiness || 'gym';
     if (lowerPrompt.includes('restaurant') || lowerPrompt.includes('food') || lowerPrompt.includes('dining') || lowerPrompt.includes('bana do')) {
       detectedCategory = 'restaurant';
     } else if (lowerPrompt.includes('salon') || lowerPrompt.includes('spa') || lowerPrompt.includes('beauty')) {
@@ -1499,7 +1660,7 @@ async function startServer() {
       detectedCategory = 'agency';
     }
 
-    const isWebsiteTask = lowerPrompt.includes('website') || 
+    const isWebsiteTask = confirmingWebsitePlan || lowerPrompt.includes('website') || 
                           lowerPrompt.includes('gym') || 
                           lowerPrompt.includes('restaurant') || 
                           lowerPrompt.includes('landing') || 
@@ -1646,7 +1807,7 @@ Return JSON in this EXACT schema:
         if (responseText) {
           const parsed = JSON.parse(responseText);
           understanding = parsed.understanding || `Executing request: ${prompt}`;
-          summary = parsed.summary || 'AETHER Brain has planned the task and activated parallel agent workstations.';
+          summary = parsed.summary || 'AURA Intelligence Core has planned the task and activated available agent workstations.';
           
           if (Array.isArray(parsed.nodes) && parsed.nodes.length > 0) {
             dagNodes = parsed.nodes.map((n: any) => ({
@@ -1677,7 +1838,7 @@ Return JSON in this EXACT schema:
       understanding = `Directing multi-agent execution pipeline for: "${prompt}"`;
       summary = isWebsiteTask
         ? `Task planned. SCOUT and PIXEL are launching simultaneous parallel research & spatial UI design, feeding directly into CODE and QA.`
-        : `Task accepted. AETHER has decomposed the instruction into parallel analytical and execution branches.`;
+        : `Task accepted. AURA has decomposed the instruction into available analytical and execution branches.`;
 
       if (isWebsiteTask) {
         dagNodes = [
@@ -1840,14 +2001,15 @@ Return JSON in this EXACT schema:
       } : undefined,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      executionStartedAt: isSensitive ? undefined : new Date().toISOString(),
       logs: [
-        `[${new Date().toLocaleTimeString()}] AETHER Brain accepted command: "${prompt}"`,
+        `[${new Date().toLocaleTimeString()}] AURA Intelligence Core accepted command: "${prompt}"`,
         `[${new Date().toLocaleTimeString()}] Parallel Level 0 nodes activated: ${dagNodes.filter(n => n.level === 0).map(n => n.agentName).join(', ')}`,
         `[${new Date().toLocaleTimeString()}] Status: ${isSensitive ? 'WAITING FOR APPROVAL' : 'RUNNING PARALLEL PIPELINE'}`
       ]
     };
 
-    tasks.unshift(newTask);
+    storeTask(newTask, commandId);
 
     // If website creation, also synthesize WebsiteProject (with server-side quota enforcement)
     let generatedWebsite: WebsiteProject | null = null;
@@ -1862,7 +2024,7 @@ Return JSON in this EXACT schema:
         newTask.nodes = [{
           id: 'node-limit-reached',
           title: 'Daily Project Allowance Reached (5/5 Projects)',
-          agentId: 'agent-aether',
+          agentId: 'agent-aura',
           agentName: 'AURA',
           role: 'Access Monitor',
           level: 0,
@@ -1893,7 +2055,7 @@ Return JSON in this EXACT schema:
 
       const siteId = 'web-' + Math.random().toString(36).substr(2, 8);
       const isRestaurant = detectedCategory === 'restaurant';
-      const siteName = isRestaurant ? 'L’Aura Artisanal Dining' : 'IronCore High-Performance Gym';
+      const siteName = conversationContext.websiteName || (isRestaurant ? 'L’Aura Artisanal Dining' : 'IronCore High-Performance Gym');
 
       generatedWebsite = {
         id: siteId,
@@ -1903,7 +2065,7 @@ Return JSON in this EXACT schema:
         headline: isRestaurant 
           ? 'Crafting Unforgettable Culinary Journeys with Seasonal Terroir'
           : 'Forge Elite Physical Condition & Unstoppable Strength',
-        description: `Engineered for prompt: "${prompt}". Includes 3-tier transparent pricing, automated WhatsApp instant booking bridge, and verified WCAG accessibility.`,
+        description: `Engineered for prompt: "${prompt}". Includes 3-tier transparent pricing, ${conversationContext.websiteRequirements?.includes('whatsapp') ? 'automated WhatsApp instant booking bridge' : 'clear contact options'}, and verified WCAG accessibility.`,
         pricing: isRestaurant ? [
           { name: 'Chef Tasting', price: '$95', period: '/guest', features: ['5-Course Seasonal Degustation', 'Sommelier Water Pairing', 'Priority Garden Seating'] },
           { name: 'Signature Terroir', price: '$155', period: '/guest', features: ['7-Course Truffle & Wagyu Journey', 'Vintage Wine Pairing Included', 'Kitchen Tour & Digestif'] },
@@ -1924,7 +2086,7 @@ Return JSON in this EXACT schema:
           { id: 'pricing', title: 'Tiers & Memberships', content: 'Transparent offerings designed to provide remarkable, uninterrupted value.' },
           { id: 'contact', title: 'Instant Reservations', content: 'Connect instantly with our team through our dedicated WhatsApp VIP concierge.' }
         ],
-        status: 'ready',
+        status: 'draft',
         seo: {
           metaTitle: `${siteName} | Official Platform`,
           metaDescription: `Reserve direct with ${siteName}. High performance experience with automated concierge.`,
@@ -1937,6 +2099,9 @@ Return JSON in this EXACT schema:
       recordProjectCreation(currentUser, siteId);
       quotaStatus = checkProjectLimit(currentUser);
       websites.unshift(generatedWebsite);
+      newTask.projectId = generatedWebsite.id;
+      conversationContext.activeWebsiteId = generatedWebsite.id;
+      conversationContext.pendingClarification = undefined;
     }
 
     res.json({
@@ -1958,16 +2123,37 @@ Return JSON in this EXACT schema:
   app.post('/api/tasks/:id/advance', (req: Request, res: Response) => {
     const task = tasks.find(t => t.taskId === req.params.id);
     if (!task) return res.status(404).json({ error: 'Task not found' });
+    if (currentUser.role !== 'OWNER' && task.userId !== currentUser.id) return res.status(403).json({ error: 'Task access denied' });
+    if (['COMPLETED', 'FAILED', 'CANCELLED', 'WAITING_FOR_APPROVAL'].includes(task.status)) {
+      return res.json({ task, agents, idempotent: true });
+    }
 
     // Identify currently running nodes and complete them
     const currentlyRunning = task.nodes.filter(n => n.status === 'running');
     
     if (currentlyRunning.length > 0) {
       currentlyRunning.forEach(node => {
+        const isVerificationNode = node.agentName === 'QA' || node.agentId === 'agent-qa';
+        const verification = isVerificationNode
+          ? verifyWebsiteProject(task.projectId ? websites.find(website => website.id === task.projectId) : undefined)
+          : null;
+
+        if (verification && !verification.ok) {
+          node.status = 'failed';
+          node.progress = 100;
+          node.logs.push(`[${node.agentName}] Verification failed: ${verification.detail}`);
+          task.status = 'FAILED';
+          task.error = verification.detail;
+          task.executionCompletedAt = new Date().toISOString();
+          task.verification = verification.detail;
+          task.logs.push(`[AURA] Task stopped during verification: ${verification.detail}`);
+          return;
+        }
+
         node.status = 'completed';
         node.progress = 100;
         node.completedAt = 'Just now';
-        node.logs.push(`[${node.agentName}] Successfully completed execution.`);
+        node.logs.push(`[${node.agentName}] ${verification?.detail || 'Execution step completed.'}`);
 
         // Emit message to dependent nodes
         const downstreamEdges = task.edges.filter(e => e.from === node.id);
@@ -2019,15 +2205,26 @@ Return JSON in this EXACT schema:
         }
       });
 
-      task.status = 'RUNNING';
-      task.logs.push(`[AETHER] Parallel execution wave dispatched: ${newlyReady.map(n => n.agentName).join(', ')}`);
+      task.status = newlyReady.some(node => node.agentName === 'QA' || node.agentId === 'agent-qa') ? 'VERIFYING' : 'RUNNING';
+      task.logs.push(`[AURA] Parallel execution wave dispatched: ${newlyReady.map(n => n.agentName).join(', ')}`);
     } else {
       // Check if all nodes are completed
       const allCompleted = task.nodes.every(n => n.status === 'completed');
       if (allCompleted) {
         task.status = 'COMPLETED';
-        task.result = 'All parallel dependencies verified and executed with zero errors.';
-        task.logs.push(`[AETHER] DAG verification completed. Entire pipeline finished successfully.`);
+        task.result = task.projectId
+          ? 'Project artifact passed server-side structural verification.'
+          : 'All configured internal execution steps completed.';
+        task.verification = task.result;
+        task.executionCompletedAt = new Date().toISOString();
+        task.logs.push(`[AURA] DAG verification completed with recorded checks.`);
+        if (task.projectId) {
+          const project = websites.find(website => website.id === task.projectId);
+          if (project) {
+            project.status = 'ready';
+            project.updatedAt = new Date().toISOString();
+          }
+        }
 
         // Reset agents to idle
         agents.forEach(a => {
@@ -2046,11 +2243,12 @@ Return JSON in this EXACT schema:
   app.post('/api/tasks/:id/approve', (req: Request, res: Response) => {
     const task = tasks.find(t => t.taskId === req.params.id);
     if (!task) return res.status(404).json({ error: 'Task not found' });
+    if (currentUser.role !== 'OWNER' && task.userId !== currentUser.id) return res.status(403).json({ error: 'Task access denied' });
 
     if (task.approval) {
       task.approval.status = 'approved';
       task.status = 'RUNNING';
-      task.logs.push(`[AETHER] Human authorization GRANTED by ${currentUser.name}. Resuming parallel pipeline.`);
+      task.logs.push(`[AURA] Human authorization GRANTED by ${currentUser.name}. Resuming parallel pipeline.`);
     }
 
     res.json({ task, message: 'Authorized by user.' });
@@ -2059,11 +2257,12 @@ Return JSON in this EXACT schema:
   app.post('/api/tasks/:id/reject', (req: Request, res: Response) => {
     const task = tasks.find(t => t.taskId === req.params.id);
     if (!task) return res.status(404).json({ error: 'Task not found' });
+    if (currentUser.role !== 'OWNER' && task.userId !== currentUser.id) return res.status(403).json({ error: 'Task access denied' });
 
     if (task.approval) {
       task.approval.status = 'rejected';
       task.status = 'CANCELLED';
-      task.logs.push(`[AETHER] Human authorization REJECTED by ${currentUser.name}. Execution cancelled.`);
+      task.logs.push(`[AURA] Human authorization REJECTED by ${currentUser.name}. Execution cancelled.`);
     }
 
     res.json({ task, message: 'Action rejected by user.' });
@@ -2071,12 +2270,14 @@ Return JSON in this EXACT schema:
 
   // Tasks list
   app.get('/api/tasks', (req: Request, res: Response) => {
-    res.json({ tasks });
+    const visibleTasks = currentUser.role === 'OWNER' ? tasks : tasks.filter(task => task.userId === currentUser.id);
+    res.json({ tasks: visibleTasks });
   });
 
   app.get('/api/tasks/:id', (req: Request, res: Response) => {
     const task = tasks.find(t => t.taskId === req.params.id);
     if (!task) return res.status(404).json({ error: 'Task not found' });
+    if (currentUser.role !== 'OWNER' && task.userId !== currentUser.id) return res.status(403).json({ error: 'Task access denied' });
     res.json({ task });
   });
 
@@ -2101,8 +2302,9 @@ Return JSON in this EXACT schema:
   // 5. STRUCTURED MEMORY ENGINE & SELF-DEVELOPING PROPOSALS
   // ===========================================================
   app.get('/api/memory', (req: Request, res: Response) => {
+    const memories = memoryDatabase.filter(memory => memory.userId === currentUser.id || memory.source === 'system_default');
     res.json({ 
-      memories: memoryDatabase,
+      memories,
       proposals: pendingMemoryProposals
     });
   });
@@ -2126,18 +2328,19 @@ Return JSON in this EXACT schema:
   });
 
   app.delete('/api/memory/:id', (req: Request, res: Response) => {
-    const idx = memoryDatabase.findIndex(m => m.memoryId === req.params.id);
-    if (idx !== -1) memoryDatabase.splice(idx, 1);
+    const idx = memoryDatabase.findIndex(m => m.memoryId === req.params.id && m.userId === currentUser.id);
+    if (idx === -1) return res.status(404).json({ error: 'Memory not found' });
+    memoryDatabase.splice(idx, 1);
     res.json({ success: true });
   });
 
   // Forget everything (Privacy command)
   app.post('/api/memory/forget-all', (req: Request, res: Response) => {
     // Keep only system defaults
-    const defaults = memoryDatabase.filter(m => m.source === 'system_default');
-    memoryDatabase.length = 0;
-    memoryDatabase.push(...defaults);
-    pendingMemoryProposals.length = 0;
+    for (let index = memoryDatabase.length - 1; index >= 0; index -= 1) {
+      if (memoryDatabase[index].userId === currentUser.id && memoryDatabase[index].source !== 'system_default') memoryDatabase.splice(index, 1);
+    }
+    pendingMemoryProposals = [];
     res.json({ success: true, message: 'All custom and learned memories have been wiped clean.' });
   });
 
@@ -2162,7 +2365,7 @@ Return JSON in this EXACT schema:
     memoryDatabase.unshift(newMemory);
     pendingMemoryProposals.splice(idx, 1);
 
-    res.json({ memory: newMemory, message: 'Saved permanent preference to AETHER memory core.' });
+    res.json({ memory: newMemory, message: 'Saved permanent preference to AURA memory core.' });
   });
 
   app.post('/api/memory/proposals/:id/reject', (req: Request, res: Response) => {
@@ -2198,8 +2401,11 @@ Return JSON in this EXACT schema:
   // 7. WEBSITES & PROJECTS (Server-Side Quota Enforced)
   // ===========================================================
   app.get('/api/websites', (req: Request, res: Response) => {
+    const visibleWebsites = currentUser.role === 'OWNER'
+      ? websites
+      : websites.filter(website => getUserProjectUsage(currentUser.id).projectIds.includes(website.id));
     res.json({ 
-      websites,
+      websites: visibleWebsites,
       quota: checkProjectLimit(currentUser)
     });
   });
@@ -2266,6 +2472,7 @@ Return JSON in this EXACT schema:
   app.patch('/api/websites/:id', (req: Request, res: Response) => {
     const site = websites.find(w => w.id === req.params.id);
     if (!site) return res.status(404).json({ error: 'Website not found' });
+    if (currentUser.role !== 'OWNER' && !getUserProjectUsage(currentUser.id).projectIds.includes(site.id)) return res.status(403).json({ error: 'Project access denied' });
 
     if (req.body.name) site.name = req.body.name;
     if (req.body.headline) site.headline = req.body.headline;
@@ -2395,57 +2602,57 @@ Return JSON in this EXACT schema:
       id: 'github',
       name: 'GitHub Repository Sync',
       icon: 'GitBranch',
-      status: 'connected',
+      status: 'needs_setup',
       description: 'Direct code push, pull request automation, branch staging, and issue triaging.',
-      details: 'Connected: repository read/write access authorized.'
+      details: 'Not connected. Configure GitHub OAuth or a server-side token.'
     },
     {
       id: 'workspace',
       name: 'Google Workspace & Drive',
       icon: 'Mail',
-      status: 'connected',
+      status: 'needs_setup',
       description: 'Calendar scheduling, automated email drafts, sheets reporting, and drive storage.',
-      details: 'Connected via OAuth 2.0 client token.'
+      details: 'Not connected. Configure Google OAuth credentials on the server.'
     },
     {
       id: 'whatsapp',
       name: 'WhatsApp Business Cloud API',
       icon: 'MessageSquare',
-      status: 'connected',
+      status: 'needs_setup',
       description: 'Instant customer lead capture, automated reservation confirmations, and 24/7 concierge.',
-      details: 'Active: Webhook listener mounted on /api/webhooks/whatsapp.'
+      details: 'Not connected. Configure WhatsApp Cloud API credentials and webhook verification.'
     },
     {
       id: 'n8n',
       name: 'n8n Autonomous Workflows',
       icon: 'Zap',
-      status: 'connected',
+      status: 'needs_setup',
       description: 'Self-hosted visual node orchestration for advanced multi-step triggers & webhooks.',
-      details: 'Connected to local execution runner node.'
+      details: 'Not connected. Configure the n8n webhook URL and server credential.'
     },
     {
       id: 'cloudsql',
       name: 'Cloud SQL / PostgreSQL',
       icon: 'Database',
-      status: 'connected',
+      status: 'needs_setup',
       description: 'Persistent relational database schemas, client lead records, and order transaction history.',
-      details: 'Database connected and healthy.'
+      details: 'Not connected. Configure a server-side PostgreSQL connection.'
     },
     {
       id: 'firebase',
       name: 'Firebase Firestore & Auth',
       icon: 'Flame',
-      status: 'connected',
+      status: 'needs_setup',
       description: 'Real-time document synchronization, vector search indexes, and mobile client authentication.',
-      details: 'Security rules verified and synchronized.'
+      details: 'Not connected. Configure Firebase credentials and security rules.'
     },
     {
       id: 'custom_api',
       name: 'External REST & GraphQL Endpoints',
       icon: 'Globe',
-      status: 'connected',
+      status: 'needs_setup',
       description: 'Secure server-to-server proxy with encrypted API key management.',
-      details: '5 outbound endpoints routed and monitored.'
+      details: 'Not connected. Add an adapter and server-side credentials for each endpoint.'
     }
   ];
 
@@ -2455,10 +2662,15 @@ Return JSON in this EXACT schema:
 
   app.post('/api/integrations/:id/toggle', (req: Request, res: Response) => {
     const item = integrationsList.find(i => i.id === req.params.id);
-    if (item) {
-      item.status = item.status === 'connected' ? 'setup_required' : 'connected';
+    if (!item) {
+      return res.status(404).json({ error: 'Integration not found' });
     }
-    res.json({ success: true, integration: item });
+
+    return res.status(501).json({
+      error: 'INTEGRATION_SETUP_REQUIRED',
+      message: `${item.name} has no configured server-side adapter or credentials.`,
+      integration: item
+    });
   });
 
   // ===========================================================
@@ -2503,12 +2715,15 @@ Return JSON in this EXACT schema:
 
   app.post('/api/automations/:id/run', (req: Request, res: Response) => {
     const auto = automationsList.find(a => a.id === req.params.id);
-    if (auto) {
-      auto.lastRun = 'Just now';
-      auto.logs = auto.logs || [];
-      auto.logs.unshift(`[${new Date().toLocaleTimeString()}] Triggered manual execution pipeline. All steps passed cleanly.`);
+    if (!auto) {
+      return res.status(404).json({ error: 'Automation not found' });
     }
-    res.json({ success: true, automation: auto });
+
+    return res.status(501).json({
+      error: 'AUTOMATION_EXECUTOR_UNAVAILABLE',
+      message: 'This workflow is defined but has no configured execution adapter. No steps were run.',
+      automation: auto
+    });
   });
 
   // ===========================================================
@@ -2594,10 +2809,10 @@ Return JSON in this EXACT schema:
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[AETHER OS] Multi-Agent AI Operating System online on http://0.0.0.0:${PORT}`);
+    console.log(`[AURA AI] Living AI Universe online on http://0.0.0.0:${PORT}`);
   });
 }
 
 startServer().catch(err => {
-  console.error('Fatal error initializing Aether OS:', err);
+  console.error('Fatal error initializing AURA AI:', err);
 });
