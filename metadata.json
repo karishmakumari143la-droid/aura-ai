@@ -1,6 +1,10 @@
 {
   "name": "AURA AI",
   "description": "Your Intelligent AI Partner that understands, creates, automates and gets work done with living neural particle physics, parallel agent orchestration, and 2.5D World.",
-  "requestFramePermissions": ["microphone"],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

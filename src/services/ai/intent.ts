@@ -13,6 +13,9 @@ export function isExplicitAction(prompt: string): boolean {
 
 export function classifyIntent(prompt: string): IntentMode {
   const normalized = prompt.toLowerCase().trim();
+  const isLanguageSwitch = /\b(hindi|english|hinglish)\b.*\b(baat|bolo|karo|talk|speak|switch)\b/i.test(normalized) || /\b(baat|bolo|talk|speak|switch)\b.*\b(hindi|english|hinglish)\b/i.test(normalized);
+  if (isLanguageSwitch) return 'CONVERSATION';
+
   const isCasual = /^(hi|hello|hey|good morning|good evening|good night|thank you|thanks|okay|ok|achha|nice|namaste|kaise ho|how are you|what are you doing|tell me something|can you help me|yes|no|haan|nahi|same|continue)\b/i.test(normalized);
   const isAdviceQuestion = /\b(kaise|how)\b.*\b(improve|seo|better|learn|fix)\b/i.test(normalized);
   const isQuestion = /\b(what|why|how|when|where|who|can you|could you|kya|kyun|kaise|kab|kahan|kaun|explain|ideas|help me understand)\b/i.test(normalized) || /[?؟]$/.test(prompt);

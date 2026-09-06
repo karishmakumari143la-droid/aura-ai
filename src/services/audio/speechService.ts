@@ -71,6 +71,21 @@ class SpeechService {
       };
 
       this.recognition.onerror = (event: any) => {
+        // Safe no-speech recovery: do not treat silence as fatal error
+        if (event.error === 'no-speech') {
+          console.log('[Voice] No speech detected in window, standing by...');
+          this.isListening = false;
+          voiceAnalyzer.stopMicrophoneAnalysis();
+          handlers.onEnd?.();
+          return;
+        }
+
+        if (event.error === 'aborted') {
+          this.isListening = false;
+          voiceAnalyzer.stopMicrophoneAnalysis();
+          return;
+        }
+
         console.warn('Speech recognition error:', event.error);
         voiceAnalyzer.stopMicrophoneAnalysis();
         this.isListening = false;
@@ -191,6 +206,22 @@ class SpeechService {
     }
     this.isSpeaking = false;
     voiceAnalyzer.stopSpeechModulation();
+  }
+
+  // Welcome greeting for authenticated session with autoplay restrictions fallback
+  public speakWelcomeGreeting(userName: string, language: 'en' | 'hi' | 'hinglish' = 'hinglish'): void {
+    const greetings = {
+      en: `Welcome back, ${userName}. AURA neural core is armed and ready.`,
+      hi: `नमस्ते ${userName}, ऑरा सिस्टम सक्रिय है। आज हम क्या बना रहे हैं?`,
+      hinglish: `Welcome ${userName}! AURA online hai. Aaj hum kya build karenge?`
+    };
+
+    const text = greetings[language] || greetings.hinglish;
+    try {
+      this.speak(text, undefined, undefined, language);
+    } catch {
+      console.log('[Voice] Autoplay was blocked by browser policy. Interaction required for audio.');
+    }
   }
 }
 

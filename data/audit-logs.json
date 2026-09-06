@@ -1,0 +1,141 @@
+[
+  {
+    "id": "audit-cc85a520e0324a88ac4d4b5f",
+    "timestamp": "2026-09-06T10:38:33.576Z",
+    "userId": "usr-test-storage",
+    "ip": "127.0.0.1",
+    "status": "SUCCESS"
+  },
+  {
+    "id": "audit-46a8eb9d0962f317fe40ee86",
+    "timestamp": "2026-09-06T10:38:52.153Z",
+    "event": "CONNECT_GITHUB",
+    "action": "CONNECT_GITHUB",
+    "userId": "usr-test-storage",
+    "ip": "127.0.0.1",
+    "status": "SUCCESS"
+  },
+  {
+    "id": "audit-a78b5a1737d62fb9c92d35ef",
+    "timestamp": "2026-09-06T10:39:14.537Z",
+    "event": "GITHUB_OAUTH_INITIATE_FAILED",
+    "action": "GITHUB_OAUTH_INITIATE_FAILED",
+    "ip": "127.0.0.1",
+    "userAgent": "curl/7.88.1",
+    "status": "FAILURE",
+    "error": "Authentication required"
+  },
+  {
+    "id": "audit-9e1cc968f83192921024f3ef",
+    "timestamp": "2026-09-06T10:39:19.793Z",
+    "event": "GITHUB_OAUTH_INITIATE_FAILED",
+    "action": "GITHUB_OAUTH_INITIATE_FAILED",
+    "ip": "127.0.0.1",
+    "userAgent": "curl/7.88.1",
+    "status": "FAILURE",
+    "error": "Authentication required"
+  },
+  {
+    "id": "audit-d4e9be84c9825f7c6f9a4772",
+    "timestamp": "2026-09-06T10:39:26.030Z",
+    "event": "GITHUB_OAUTH_INITIATE_FAILED",
+    "action": "GITHUB_OAUTH_INITIATE_FAILED",
+    "userId": "usr-trn3s9bw2",
+    "ip": "127.0.0.1",
+    "userAgent": "curl/7.88.1",
+    "status": "FAILURE",
+    "error": "NOT_CONFIGURED: Missing GITHUB_CLIENT_ID or GITHUB_CLIENT_SECRET"
+  },
+  {
+    "id": "audit-c2bdbd4f0f0b8d0c8a2c8712",
+    "timestamp": "2026-09-06T10:39:44.408Z",
+    "event": "GITHUB_OAUTH_INITIATE_FAILED",
+    "action": "GITHUB_OAUTH_INITIATE_FAILED",
+    "ip": "127.0.0.1",
+    "userAgent": "node",
+    "status": "FAILURE",
+    "error": "Authentication required"
+  },
+  {
+    "id": "audit-1bb0725a9f6888bfc796c1db",
+    "timestamp": "2026-09-06T10:39:44.420Z",
+    "event": "GITHUB_OAUTH_CALLBACK_FAILED",
+    "action": "GITHUB_OAUTH_CALLBACK_FAILED",
+    "ip": "127.0.0.1",
+    "userAgent": "node",
+    "status": "FAILURE",
+    "error": "NOT_CONFIGURED"
+  },
+  {
+    "id": "audit-0b0edeb4ea9405db5059860f",
+    "timestamp": "2026-09-06T10:40:02.284Z",
+    "event": "GITHUB_OAUTH_INITIATE_FAILED",
+    "action": "GITHUB_OAUTH_INITIATE_FAILED",
+    "ip": "127.0.0.1",
+    "userAgent": "node",
+    "status": "FAILURE",
+    "error": "Authentication required"
+  },
+  {
+    "id": "audit-6754f9b766995eaa803000c0",
+    "timestamp": "2026-09-06T10:40:02.291Z",
+    "event": "GITHUB_OAUTH_CALLBACK_FAILED",
+    "action": "GITHUB_OAUTH_CALLBACK_FAILED",
+    "ip": "127.0.0.1",
+    "userAgent": "node",
+    "status": "FAILURE",
+    "error": "NOT_CONFIGURED"
+  },
+  {
+    "id": "audit-566c546bf05ff0b310f6b0af",
+    "timestamp": "2026-09-06T11:29:21.791Z",
+    "event": "UPI_ORDER_CREATED",
+    "action": "UPI_ORDER_CREATED",
+    "userId": "usr-9t0kqwbdi",
+    "status": "SUCCESS",
+    "details": {
+      "orderId": "AURA-ORD-1788694161735-CE5688",
+      "amount": 499,
+      "planId": "PRO_MONTHLY",
+      "vpa": "9818691915@pytes"
+    }
+  },
+  {
+    "id": "audit-b514a988498d4c964c697d4c",
+    "timestamp": "2026-09-06T11:29:21.800Z",
+    "event": "UPI_UTR_SUBMITTED",
+    "action": "UPI_UTR_SUBMITTED",
+    "userId": "usr-9t0kqwbdi",
+    "status": "SUCCESS",
+    "details": {
+      "orderId": "AURA-ORD-1788694161735-CE5688",
+      "utr": "423589123456"
+    }
+  },
+  {
+    "id": "audit-305e9b23a39bc4ddb895c79f",
+    "timestamp": "2026-09-06T11:29:26.452Z",
+    "event": "UPI_BANK_WEBHOOK_VERIFIED",
+    "action": "UPI_BANK_WEBHOOK_VERIFIED",
+    "status": "SUCCESS",
+    "details": {
+      "orderId": "AURA-ORD-1788694161735-CE5688",
+      "utr": "423589123456",
+      "amount": 499
+    }
+  },
+  {
+    "id": "audit-8bc4a379aaedfc33da0fa5e1",
+    "timestamp": "2026-09-06T12:01:14.214Z",
+    "event": "GITHUB_OAUTH_INITIATE",
+    "action": "GITHUB_OAUTH_INITIATE",
+    "userId": "usr-09aq1v311",
+    "ip": "127.0.0.1",
+    "userAgent": "node",
+    "status": "SUCCESS",
+    "details": {
+      "callbackUrl": "https://ais-dev-j4orwzb3gq7axdcqgs25nj-831494674852.asia-southeast1.run.app/api/auth/github/callback",
+      "scopes": "read:user user:email repo"
+    }
+  }
+]

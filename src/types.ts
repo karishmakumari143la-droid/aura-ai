@@ -13,6 +13,15 @@ export interface User {
   createdAt: string;
   avatarUrl?: string;
   isOwner?: boolean;
+  github?: {
+    id: number | string;
+    username: string;
+    name?: string;
+    email?: string;
+    avatarUrl?: string;
+    connectedAt: string;
+    scope?: string;
+  };
 }
 
 export type AIOrbState = 
@@ -358,4 +367,37 @@ export interface ProjectQuotaStatus {
   totalProjects: number;
   allowed: boolean;
   message?: string;
+}
+
+export type UPIOrderStatus = 'CREATED' | 'PENDING_VERIFICATION' | 'VERIFIED' | 'REJECTED';
+
+export interface UPIOrder {
+  orderId: string;
+  txnRef: string;
+  userId: string;
+  userEmail: string;
+  userName?: string;
+  amount: number; // in INR
+  currency: 'INR';
+  planId: string;
+  planName: string;
+  payeeVpa: string;
+  payeeName: string;
+  upiUri: string;
+  qrDataUrl: string;
+  status: UPIOrderStatus;
+  createdAt: string;
+  customerUtr?: string;
+  utrSubmittedAt?: string;
+  verifiedAt?: string;
+  verifiedBy?: string;
+  rejectionReason?: string;
+}
+
+export interface UPIConfig {
+  upiId: string;
+  payeeName: string;
+  enabled: boolean;
+  gatewayFree: boolean;
+  supportedApps: string[];
 }

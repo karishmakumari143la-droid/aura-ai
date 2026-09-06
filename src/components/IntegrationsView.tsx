@@ -11,7 +11,8 @@ import {
   Check, 
   AlertCircle, 
   ShieldCheck,
-  ExternalLink
+  ExternalLink,
+  QrCode
 } from 'lucide-react';
 
 export const IntegrationsView: React.FC = () => {
@@ -26,7 +27,8 @@ export const IntegrationsView: React.FC = () => {
     CreditCard,
     Database,
     Flame,
-    Globe
+    Globe,
+    QrCode
   };
 
   const fetchIntegrations = async () => {
@@ -52,6 +54,11 @@ export const IntegrationsView: React.FC = () => {
     try {
       const res = await fetch(`/api/integrations/${id}/toggle`, { method: 'POST' });
       if (res.ok) {
+        const data = await res.json().catch(() => null);
+        if (data?.authUrl) {
+          window.location.href = data.authUrl;
+          return;
+        }
         fetchIntegrations();
       }
     } catch (err) {
@@ -68,7 +75,7 @@ export const IntegrationsView: React.FC = () => {
             <span>Integrations & Service Infrastructure</span>
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">
-            Production connections to GitHub, Google Workspace, WhatsApp Cloud API, n8n, Stripe, and databases.
+            Production connections to GitHub, Google Workspace, WhatsApp Cloud API, n8n, Direct UPI Payments, and databases.
           </p>
         </div>
       </div>
