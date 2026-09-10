@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { spawn } from 'child_process';
 import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 import { createServer as createViteServer } from 'vite';
@@ -858,6 +859,7 @@ async function startServer() {
     }
     if (
       req.path === '/health' ||
+      req.path.startsWith('/brain') ||
       req.path.startsWith('/auth') ||
       req.path === '/upi/config' ||
       req.path.startsWith('/upi/webhook') ||
@@ -3169,7 +3171,8 @@ Return JSON in this EXACT schema:
     }
 
     const payload = JSON.stringify({ tool, args: args || {}, confirmed: Boolean(confirmed) });
-    const pyCmd = `python3 companion/aura_companion.py --exec ${JSON.stringify(payload)}`;
+    const b64 = Buffer.from(payload).toString('base64');
+    const pyCmd = `python3 companion/aura_companion.py --b64 ${b64}`;
 
     const result = await RealExecutor.executeCommand(user.id, pyCmd, process.cwd(), 15000);
     if (result.success && result.data) {
@@ -3327,6 +3330,164 @@ Return JSON in this EXACT schema:
     };
     clientsList.unshift(newLead);
     res.json({ success: true, lead: newLead });
+  });
+
+  // ===========================================================
+  // 13.5. PYTHON CENTRAL INTELLIGENCE BRAIN ENDPOINTS
+  // ===========================================================
+  const runPythonBrain = async (payload: any): Promise<any> => {
+    return new Promise((resolve) => {
+      const pythonProcess = spawn('python3', ['-m', 'python_brain.cli', JSON.stringify(payload)], {
+        cwd: process.cwd(),
+        env: { ...process.env }
+      });
+
+      let stdout = '';
+      let stderr = '';
+
+      pythonProcess.stdout.on('data', (data) => {
+        stdout += data.toString();
+      });
+
+      pythonProcess.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      pythonProcess.on('close', (code) => {
+        if (code !== 0) {
+          try {
+            const parsed = JSON.parse(stdout);
+            return resolve(parsed);
+          } catch {
+            return resolve({
+              success: false,
+              error: stderr || `Python process exited with code ${code}`,
+              rawStdout: stdout
+            });
+          }
+        }
+        try {
+          const firstBrace = stdout.indexOf('{');
+          const lastBrace = stdout.lastIndexOf('}');
+          if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+            const jsonSubstring = stdout.slice(firstBrace, lastBrace + 1);
+            return resolve(JSON.parse(jsonSubstring));
+          }
+          const parsed = JSON.parse(stdout.trim());
+          resolve(parsed);
+        } catch (err: any) {
+          resolve({
+            success: false,
+            error: `Failed to parse Python brain response: ${err.message}`,
+            rawStdout: stdout
+          });
+        }
+      });
+    });
+  };
+
+  app.get('/api/brain/status', async (req: Request, res: Response) => {
+    try {
+      const result = await runPythonBrain({ action: 'status' });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post('/api/brain/turn', async (req: Request, res: Response) => {
+    try {
+      const { prompt, user_id, session_id, interactive_confirm, idempotency_key } = req.body;
+      if (!prompt) {
+        return res.status(400).json({ success: false, error: 'prompt is required' });
+      }
+      const sessionUser = (req as any).user || getSessionUser(req);
+      const uid = user_id || (sessionUser ? sessionUser.id : 'default_user');
+
+      const result = await runPythonBrain({
+        action: 'turn',
+        prompt,
+        user_id: uid,
+        session_id: session_id || 'active_session',
+        interactive_confirm: !!interactive_confirm,
+        idempotency_key
+      });
+
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get('/api/brain/audit', async (req: Request, res: Response) => {
+    try {
+      const sessionUser = (req as any).user || getSessionUser(req);
+      const uid = (req.query.user_id as string) || (sessionUser ? sessionUser.id : undefined);
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 50;
+
+      const result = await runPythonBrain({
+        action: 'get_audit_logs',
+        user_id: uid,
+        limit
+      });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get('/api/brain/permissions', async (req: Request, res: Response) => {
+    try {
+      const sessionUser = (req as any).user || getSessionUser(req);
+      const uid = (req.query.user_id as string) || (sessionUser ? sessionUser.id : 'default_user');
+
+      const result = await runPythonBrain({
+        action: 'get_permissions',
+        user_id: uid
+      });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post('/api/brain/permissions', async (req: Request, res: Response) => {
+    try {
+      const sessionUser = (req as any).user || getSessionUser(req);
+      const uid = req.body.user_id || (sessionUser ? sessionUser.id : 'default_user');
+      const { perm_key, state } = req.body;
+
+      if (!perm_key || !state) {
+        return res.status(400).json({ success: false, error: 'perm_key and state are required' });
+      }
+
+      const result = await runPythonBrain({
+        action: 'set_permission',
+        user_id: uid,
+        perm_key,
+        state
+      });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get('/api/brain/memory', async (req: Request, res: Response) => {
+    try {
+      const sessionUser = (req as any).user || getSessionUser(req);
+      const uid = (req.query.user_id as string) || (sessionUser ? sessionUser.id : 'default_user');
+      const query = (req.query.q as string) || '';
+
+      const result = await runPythonBrain({
+        action: 'memory_search',
+        user_id: uid,
+        query
+      });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
   });
 
   // Fallback for unhandled /api routes - return JSON 404 instead of falling through to Vite/index.html

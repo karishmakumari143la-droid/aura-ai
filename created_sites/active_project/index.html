@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>AURA Verified Landing Page</title>
+    <style>
+        body { font-family: sans-serif; padding: 40px; background: #0f172a; color: #f8fafc; }
+        .card { background: #1e293b; padding: 30px; border-radius: 12px; max-width: 600px; margin: auto; }
+        h1 { color: #38bdf8; margin-top: 0; }
+        button { background: #0284c7; color: white; border: none; padding: 12px 24px; border-radius: 6px; font-size: 16px; cursor: pointer; }
+        button:hover { background: #0369a1; }
+        .badge { display: none; margin-top: 15px; padding: 10px; background: #059669; border-radius: 6px; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1 id="title">AURA Autonomous Intelligence</h1>
+        <p id="desc">Next-generation computer control and agentic execution system.</p>
+        <button id="primary-cta" class="cta" onclick="document.getElementById('result-badge').style.display='block'; document.getElementById('primary-cta').innerText='Action Verified!';">
+            Launch Autonomous Action
+        </button>
+        <div id="result-badge" class="badge">Success: CTA Interaction Completed</div>
+    </div>
+</body>
+</html>

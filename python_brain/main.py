@@ -1,0 +1,219 @@
+"""
+AURA AI — Central Python FastAPI Server
+Exposes all brain orchestration, tools, voice, permissions, audit, and WebSocket events.
+"""
+
+import os
+import sys
+from typing import Dict, Any, List, Optional
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+
+from .brain import AuraBrain
+from .voice.service import VoiceService
+from .runtime.background import BackgroundTaskManager
+from .ws.events import event_dispatcher
+
+app = FastAPI(
+    title="AURA AI Central Intelligence Brain",
+    description="Production-grade Python intelligence orchestration and execution layer",
+    version="3.0.0"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+brain = AuraBrain()
+voice_service = VoiceService()
+task_manager = BackgroundTaskManager()
+
+# Request Models
+class ChatRequest(BaseModel):
+    prompt: str
+    user_id: Optional[str] = "default_user"
+    session_id: Optional[str] = "default_session"
+    interactive_confirm: Optional[bool] = False
+    idempotency_key: Optional[str] = None
+
+class VoiceRequest(BaseModel):
+    transcript: str
+    user_id: Optional[str] = "default_user"
+
+class PermissionUpdateRequest(BaseModel):
+    user_id: str
+    perm_key: str
+    state: str  # 'allow', 'ask', 'deny'
+
+class MemoryStoreRequest(BaseModel):
+    user_id: str
+    category: str
+    key: str
+    value: Any
+    tags: Optional[List[str]] = None
+
+class ToolExecuteRequest(BaseModel):
+    tool: str
+    args: Dict[str, Any]
+    user_id: Optional[str] = "default_user"
+    confirmed: Optional[bool] = False
+
+class QARequest(BaseModel):
+    file_path: str
+
+class BackgroundTaskRequest(BaseModel):
+    user_id: str
+    title: str
+    command: Optional[str] = None
+
+# ==================== ENDPOINTS ====================
+
+@app.get("/health")
+def health_check():
+    return brain.get_system_status()
+
+@app.get("/api/brain/status")
+def system_status():
+    return brain.get_system_status()
+
+@app.post("/api/brain/chat")
+async def chat_turn(req: ChatRequest):
+    res = brain.process_turn(
+        prompt=req.prompt,
+        user_id=req.user_id or "default_user",
+        session_id=req.session_id or "default_session",
+        interactive_confirm=req.interactive_confirm or False,
+        idempotency_key=req.idempotency_key
+    )
+    # Broadcast event via WebSocket
+    await event_dispatcher.broadcast("BRAIN_TURN_COMPLETED", {
+        "intent": res.get("intent"),
+        "tasks_created": res.get("tasks_created", 0),
+        "duration_ms": res.get("duration_ms", 0),
+        "success": res.get("success", True)
+    })
+    return res
+
+@app.post("/api/brain/voice")
+def handle_voice(req: VoiceRequest):
+    voice_res = voice_service.process_voice_transcript(req.transcript)
+    if voice_res.get("is_empty"):
+        return {"voice": voice_res, "brain": None}
+
+    # If speech is valid, run brain processing
+    brain_res = brain.process_turn(
+        prompt=voice_res["text"],
+        user_id=req.user_id or "default_user",
+        interactive_confirm=False
+    )
+    tts_payload = voice_service.prepare_tts_payload(
+        text=brain_res.get("response", ""),
+        language=voice_res.get("language")
+    )
+    return {
+        "voice": voice_res,
+        "brain": brain_res,
+        "tts": tts_payload
+    }
+
+@app.get("/api/brain/permissions")
+def get_permissions(user_id: str = Query("default_user")):
+    return {"user_id": user_id, "permissions": brain.permissions.get_permissions(user_id)}
+
+@app.post("/api/brain/permissions")
+def set_permission(req: PermissionUpdateRequest):
+    try:
+        brain.permissions.set_permission(req.user_id, req.perm_key, req.state)
+        return {"success": True, "user_id": req.user_id, "perm_key": req.perm_key, "state": req.state}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/api/brain/audit")
+def get_audit_logs(user_id: Optional[str] = None, limit: int = 50):
+    return {"logs": brain.audit.get_recent_logs(user_id=user_id, limit=limit)}
+
+@app.get("/api/brain/memory")
+def get_memories(user_id: str = Query("default_user"), query: str = Query(""), category: Optional[str] = None):
+    memories = brain.memory.search_memories(user_id=user_id, query=query, category=category)
+    return {"user_id": user_id, "memories": memories}
+
+@app.post("/api/brain/memory")
+def store_memory(req: MemoryStoreRequest):
+    brain.memory.set_memory(req.user_id, req.category, req.key, req.value, req.tags)
+    return {"success": True, "stored": {"key": req.key, "category": req.category}}
+
+@app.post("/api/brain/qa")
+def run_qa(req: QARequest):
+    from .qa.qa_engine import QAEngine
+    return QAEngine.audit_website_file(req.file_path)
+
+@app.post("/api/brain/execute")
+def execute_tool(req: ToolExecuteRequest):
+    perm_key = brain._map_tool_to_permission(req.tool)
+    allowed, msg, state = brain.permissions.check_permission(req.user_id or "default_user", perm_key.value, req.confirmed or False)
+    if not allowed:
+        return {"success": False, "error": msg, "permission_state": state, "requires_confirmation": (state == "ask")}
+
+    if req.tool == "filesystem_read":
+        return brain.fs.read_file(req.args.get("path", ""))
+    elif req.tool == "filesystem_write":
+        return brain.fs.write_file(req.args.get("path", ""), req.args.get("content", ""))
+    elif req.tool == "terminal_execute":
+        return brain.terminal.execute_command(req.args.get("command", ""), cwd=req.args.get("cwd"))
+    elif req.tool == "code_runner":
+        return brain.code_runner.run_python_code(req.args.get("code", ""))
+    elif req.tool == "browser_inspect":
+        return brain.browser.navigate_and_inspect(req.args.get("url", ""))
+    elif req.tool == "git_action":
+        act = req.args.get("action", "status")
+        if act == "status": return brain.git.status()
+        if act == "branch": return brain.git.branch()
+        return brain.git.log()
+    elif req.tool == "web_research":
+        return brain.research.search(req.args.get("query", ""))
+    elif req.tool == "app_launch":
+        return brain.launcher.launch(req.args.get("app_name", ""))
+    elif req.tool == "screen_capture":
+        return brain.screen.capture_screen(req.args.get("target", ""))
+    return {"success": False, "error": f"Unsupported tool: {req.tool}"}
+
+@app.post("/api/brain/background-task")
+def launch_background_task(req: BackgroundTaskRequest):
+    def worker(task_id: str):
+        if req.command:
+            res = brain.terminal.execute_command(req.command)
+            return res
+        return {"message": f"Background task '{req.title}' finished."}
+
+    task_id = task_manager.launch_in_background(req.user_id, req.title, worker)
+    return {"success": True, "task_id": task_id, "status": "QUEUED"}
+
+@app.get("/api/brain/background-task/{task_id}")
+def get_background_task(task_id: str):
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await event_dispatcher.connect(websocket)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            # Handle incoming ping / messages
+            await websocket.send_text(f'{{"type": "PONG", "received": "{data}"}}')
+    except WebSocketDisconnect:
+        event_dispatcher.disconnect(websocket)
+
+def run():
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=8000, log_level="info")
+
+if __name__ == "__main__":
+    run()
