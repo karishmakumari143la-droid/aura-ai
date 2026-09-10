@@ -281,7 +281,8 @@ class AuraBrain:
         # 5. ACTION REQUEST — PLAN & SELECT TOOLS
         available_tools = [
             "filesystem_write", "filesystem_read", "terminal_execute",
-            "code_runner", "browser_screenshot", "git_action", "web_research", "qa_verify_site"
+            "code_runner", "browser_screenshot", "browser_inspect", "browser_control", "browser_e2e",
+            "git_action", "web_research", "qa_verify_site"
         ]
         context = {"workspace": self.workspace_root, "language": language}
         plan_steps = self.reasoning.plan_execution_steps(clean_prompt, available_tools, context)

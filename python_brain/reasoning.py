@@ -634,6 +634,38 @@ class LLMReasoning:
         context: Dict[str, Any]
     ) -> List[Dict[str, Any]]:
         """Creates a structured multi-step execution plan using Gemini or planner fallback."""
+
+        # Deterministic safety routing for explicit browser/navigation intent.
+        # Prevents URLs and browser commands from being misrouted to code_runner.
+        low = goal.lower()
+        browser_markers = [
+            "http://", "https://", "open website", "open the website",
+            "open webpage", "open the webpage", "visit website",
+            "visit the website", "navigate to", "browse to",
+            "inspect the page", "inspect webpage", "inspect the website",
+            "inspect website", "browser", "webpage"
+        ]
+
+        if any(marker in low for marker in browser_markers):
+            target = goal.strip()
+            url_start = target.find("http://")
+            if url_start == -1:
+                url_start = target.find("https://")
+
+            if url_start >= 0:
+                target = target[url_start:].split()[0].rstrip(".,!?)]}")
+            else:
+                target = ""
+
+            if target:
+                return [{
+                    "step_id": 1,
+                    "tool": "browser_inspect",
+                    "description": "Open the target URL in the real browser and inspect the page",
+                    "args": {"url": target},
+                    "verification": "Confirm page loaded, DOM inspected, and browser result verified"
+                }]
+
         if self.is_gemini_active():
             from google.genai import types
             afc = types.AutomaticFunctionCallingConfig(disable=True)
@@ -641,7 +673,8 @@ class LLMReasoning:
                 "You are the execution planner for AURA AI. Given a goal and available tools, "
                 "return ONLY a valid JSON array of execution step objects.\n"
                 "Allowed tools: filesystem_write, filesystem_read, terminal_execute, code_runner, "
-                "browser_screenshot, git_action, web_research, qa_verify_site.\n"
+                "browser_screenshot, browser_inspect, browser_control, browser_e2e, "
+                "git_action, web_research, qa_verify_site.\n"
                 "Each step must have: step_id (int), tool (str), description (str), args (object), verification (str).\n"
                 "For web projects: write complete semantic HTML5 with Tailwind CSS in index.html, "
                 "run automated QA audit (qa_verify_site), and capture screenshots (browser_screenshot).\n"
