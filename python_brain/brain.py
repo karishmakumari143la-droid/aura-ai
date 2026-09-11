@@ -1,3 +1,4 @@
+from pathlib import Path
 """
 AURA AI — Central Autonomous Python Intelligence Brain
 Executes the full cognitive lifecycle:
@@ -26,6 +27,7 @@ from .qa.qa_engine import QAEngine
 from .verification.verifier import Verifier
 from .recovery.healer import ErrorHealer
 from .runtime.idempotency import IdempotencyEngine
+from companion.aura_companion import AuraCompanion
 
 class AuraBrain:
     def __init__(self, workspace_root: Optional[str] = None, data_dir: Optional[str] = None):
@@ -54,6 +56,8 @@ class AuraBrain:
         self.research = WebResearchTool()
         self.launcher = AppLauncherTool()
         self.screen = ScreenVisionTool()
+        # Real local Desktop Companion bridge.
+        self.companion = AuraCompanion(workspace_root=self.workspace_root)
 
     def get_system_status(self) -> Dict[str, Any]:
         diagnostics = self.reasoning.get_diagnostics()
@@ -72,7 +76,7 @@ class AuraBrain:
                 "git_version_control": "WORKING",
                 "web_research": "WORKING",
                 "screen_capture_vision": self.screen.get_status(),
-                "desktop_companion": "NOT_CONFIGURED",
+                "desktop_companion": self._get_companion_status(),
                 "app_launcher": "WORKING",
                 "qa_audit_engine": "WORKING",
                 "automated_healing": "WORKING",
@@ -81,6 +85,23 @@ class AuraBrain:
                 "permissions_enforcement": "WORKING"
             }
         }
+
+    def _get_companion_status(self) -> str:
+        """Report Desktop Companion availability from the real local bridge."""
+        try:
+            companion = self.companion
+            required_methods = (
+                "terminal_execute",
+                "app_launch",
+                "clipboard_read",
+                "clipboard_write",
+            )
+            if all(callable(getattr(companion, name, None)) for name in required_methods):
+                return "WORKING"
+            return "NOT_CONFIGURED"
+        except Exception:
+            # Diagnostics must fail closed rather than claim a working capability.
+            return "NOT_CONFIGURED"
 
     def get_status(self) -> Dict[str, Any]:
         return self.get_system_status()
@@ -445,7 +466,13 @@ class AuraBrain:
 
                     step_result = self.fs.write_file(path, content)
                     if step_result["success"]:
-                        files_created.append(path)
+                        written_path = step_result.get("path") or path
+                        if not os.path.isabs(written_path):
+                            written_path = os.path.join(
+                                self.workspace_root,
+                                written_path,
+                            )
+                        files_created.append(os.path.abspath(written_path))
 
                 elif tool_name == "filesystem_read":
                     step_result = self.fs.read_file(args.get("path", ""))
@@ -497,8 +524,12 @@ class AuraBrain:
 
                 elif tool_name in ("browser_control", "browser_inspect", "browser_e2e"):
                     target = args.get("url") or args.get("target", "")
-                    if not target and files_created:
-                        target = files_created[0]
+                    # For generated local artifacts, always prefer the
+                    # physically verified path produced by filesystem_write.
+                    # Planner targets such as "active_project/index.html"
+                    # are only fallbacks.
+                    if files_created and not args.get("url"):
+                        target = files_created[-1]
                     if args.get("actions"):
                         step_result = self.browser.execute_e2e_flow(
                             target_url=target,
@@ -563,9 +594,113 @@ class AuraBrain:
                 "duration_ms": step_duration
             })
 
+            # Formal outcome verification.
+            # A successful tool call is not sufficient by itself; verify
+            # that the requested physical outcome actually exists.
+            outcome_verification = None
+
+            if (
+                tool_name == "filesystem_write"
+                and step_result.get("success") is True
+            ):
+                written_path = step_result.get("path") or args.get("path")
+
+                if written_path:
+                    full_path = os.path.join(
+                        self.workspace_root,
+                        written_path
+                    )
+
+                    outcome_verification = Verifier.verify_file_exists(
+                        full_path,
+                        min_bytes=0
+                    )
+
+                    # For explicit content writes, also verify exact content.
+                    if outcome_verification.get("verified") and "content" in args:
+                        expected_content = str(args.get("content", ""))
+
+                        try:
+                            actual_content = Path(full_path).read_text(
+                                encoding="utf-8"
+                            )
+
+                            content_matches = (
+                                actual_content == expected_content
+                            )
+
+                            outcome_verification["content_verified"] = (
+                                content_matches
+                            )
+
+                            if not content_matches:
+                                outcome_verification["verified"] = False
+                                outcome_verification["error"] = (
+                                    "File exists, but its content does not "
+                                    "match the requested content."
+                                )
+                        except Exception as verify_error:
+                            outcome_verification = {
+                                "verified": False,
+                                "content_verified": False,
+                                "error": (
+                                    f"Content verification failed: "
+                                    f"{verify_error}"
+                                ),
+                            }
+
+                    step_result["outcome_verification"] = outcome_verification
+
+                    if not outcome_verification.get("verified", False):
+                        step_result["success"] = False
+                        overall_success = False
+                        fatal_error = outcome_verification.get(
+                            "error",
+                            "Requested file outcome could not be verified."
+                        )
+
+            # Formal terminal outcome verification.
+            # A successful tool call is not enough; verify the
+            # actual process exit status when available.
+            if (
+                tool_name == "terminal_execute"
+                and step_result.get("exit_code") is not None
+            ):
+                exit_code = step_result.get("exit_code")
+
+                # TerminalTool normally returns an exit code.
+                # Do not silently claim verification when it is absent.
+                if exit_code is None:
+                    outcome_verification = {
+                        "verified": False,
+                        "verification_type": "process_exit_code",
+                        "error": (
+                            "Terminal command completed without a "
+                            "verifiable exit code."
+                        ),
+                    }
+                else:
+                    outcome_verification = Verifier.verify_process_output(
+                        int(exit_code),
+                        expected_code=0,
+                    )
+                    outcome_verification["verification_type"] = (
+                        "process_exit_code"
+                    )
+
+                step_result["outcome_verification"] = outcome_verification
+
+                if not outcome_verification.get("verified", False):
+                    step_result["success"] = False
+                    overall_success = False
+                    fatal_error = outcome_verification.get(
+                        "error",
+                        "Terminal command outcome could not be verified."
+                    )
+
             if not step_result.get("success", False):
                 overall_success = False
-                fatal_error = step_result.get("error")
+                fatal_error = step_result.get("error") or fatal_error
                 break
 
         # 7. TRUTHFUL NATURAL RESPONSE GENERATION
@@ -630,7 +765,10 @@ class AuraBrain:
             "qa_audit": qa_audit,
             "duration_ms": total_duration,
             "tasks_created": len(plan_steps),
-            "execution_performed": True
+            "execution_performed": any(
+                bool(step.get("result", {}).get("success", False))
+                for step in executed_steps
+            )
         }
         self.idempotency.record_completed(req_key, res)
         return res

@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from .brain import AuraBrain
 from .security.permissions import PermissionKey
 from .voice.service import VoiceService
-from .runtime.background import BackgroundTaskManager
+from .runtime.background import BackgroundTaskManager, DurableTaskDispatcher
 from .ws.events import event_dispatcher
 
 app = FastAPI(
@@ -33,6 +33,29 @@ app.add_middleware(
 brain = AuraBrain()
 voice_service = VoiceService()
 task_manager = BackgroundTaskManager()
+durable_dispatcher = DurableTaskDispatcher(
+    manager=task_manager,
+    brain=brain,
+)
+
+# ============================================================
+# DURABLE BACKGROUND RUNTIME
+# ============================================================
+
+@app.on_event("startup")
+def recover_and_dispatch_durable_tasks():
+    recovered = task_manager.recover_interrupted_tasks()
+
+    dispatched = durable_dispatcher.dispatch_queued_tasks(
+        limit=10
+    )
+
+    print(
+        "[AURA] Durable runtime startup: "
+        f"recovered={len(recovered)} "
+        f"dispatched={len(dispatched)}"
+    )
+
 
 # Request Models
 class ChatRequest(BaseModel):
@@ -300,24 +323,41 @@ def launch_background_task(req: BackgroundTaskRequest):
                 "scope_id": scope_id
             }
 
-    def worker(task_id: str):
-        if req.command:
-            return brain.terminal.execute_command(req.command)
+    # Persist background work as an allowlisted durable task.
+    # Never serialize arbitrary Python functions/code.
+    if req.command:
+        task_id = task_manager.create_durable_task(
+            user_id=user_id,
+            title=req.title,
+            task_type="terminal_command",
+            payload={
+                "command": req.command,
+            },
+        )
+
+        # Queue the durable task and return immediately.
+        # Actual execution happens in the dispatcher worker thread.
+        durable_dispatcher.dispatch_task_async(task_id)
+
         return {
-            "message": f"Background task '{req.title}' finished."
+            "success": True,
+            "task_id": task_id,
+            "status": "QUEUED",
+            "scope_id": scope_id,
+            "durable": True,
         }
 
-    task_id = task_manager.launch_in_background(
-        user_id,
-        req.title,
-        worker
+    task_id = task_manager.create_task(
+        user_id=user_id,
+        title=req.title,
     )
 
     return {
         "success": True,
         "task_id": task_id,
         "status": "QUEUED",
-        "scope_id": scope_id
+        "scope_id": scope_id,
+        "durable": False,
     }
 
 @app.get("/api/brain/background-task/{task_id}")

@@ -1,6 +1,12 @@
 """
 AURA AI — Background Task Execution Runtime
-Executes tasks independently of active browser tabs or client connections.
+
+Provides:
+- SQLite-persistent task state
+- durable allowlisted task payloads
+- restart recovery
+- idempotent recovery
+- backward-compatible in-process workers
 """
 
 import sqlite3
@@ -11,9 +17,20 @@ import threading
 import uuid
 from typing import Dict, Any, Optional, Callable
 
+
 class BackgroundTaskManager:
+
+    ALLOWED_DURABLE_TASK_TYPES = frozenset({
+        "terminal_command",
+    })
+
     def __init__(self, db_path: Optional[str] = None):
-        self.db_path = db_path or os.path.join(os.getcwd(), "data", "aura_tasks.db")
+        self.db_path = db_path or os.path.join(
+            os.getcwd(),
+            "data",
+            "aura_tasks.db",
+        )
+
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self._init_db()
 
@@ -24,7 +41,7 @@ class BackgroundTaskManager:
                     task_id TEXT PRIMARY KEY,
                     user_id TEXT NOT NULL,
                     title TEXT NOT NULL,
-                    status TEXT NOT NULL,  -- 'QUEUED', 'RUNNING', 'COMPLETED', 'FAILED'
+                    status TEXT NOT NULL,
                     progress INTEGER DEFAULT 0,
                     logs TEXT DEFAULT '[]',
                     result TEXT,
@@ -32,79 +49,570 @@ class BackgroundTaskManager:
                     updated_at REAL NOT NULL
                 )
             """)
+
+            columns = {
+                row[1]
+                for row in conn.execute(
+                    "PRAGMA table_info(background_tasks)"
+                ).fetchall()
+            }
+
+            if "task_type" not in columns:
+                conn.execute(
+                    "ALTER TABLE background_tasks "
+                    "ADD COLUMN task_type TEXT"
+                )
+
+            if "payload" not in columns:
+                conn.execute(
+                    "ALTER TABLE background_tasks "
+                    "ADD COLUMN payload TEXT"
+                )
+
             conn.commit()
 
     def create_task(self, user_id: str, title: str) -> str:
         task_id = str(uuid.uuid4())
         now = time.time()
+
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("""
-                INSERT INTO background_tasks (task_id, user_id, title, status, progress, logs, created_at, updated_at)
+                INSERT INTO background_tasks (
+                    task_id,
+                    user_id,
+                    title,
+                    status,
+                    progress,
+                    logs,
+                    created_at,
+                    updated_at
+                )
                 VALUES (?, ?, ?, 'QUEUED', 0, '[]', ?, ?)
-            """, (task_id, user_id, title, now, now))
+            """, (
+                task_id,
+                user_id,
+                title,
+                now,
+                now,
+            ))
+
             conn.commit()
+
         return task_id
 
-    def update_task(self, task_id: str, status: Optional[str] = None, progress: Optional[int] = None, new_log: Optional[str] = None, result: Optional[Any] = None):
+    def create_durable_task(
+        self,
+        user_id: str,
+        title: str,
+        task_type: str,
+        payload: Dict[str, Any],
+    ) -> str:
+        """
+        Create a restart-safe task.
+
+        Only explicitly allowlisted task types may be persisted.
+        Arbitrary Python code/functions are never serialized.
+        """
+
+        if task_type not in self.ALLOWED_DURABLE_TASK_TYPES:
+            raise ValueError(
+                f"Unsupported durable task type: {task_type}"
+            )
+
+        if not isinstance(payload, dict):
+            raise ValueError(
+                "Durable task payload must be an object."
+            )
+
+        if task_type == "terminal_command":
+            command = payload.get("command")
+
+            if not isinstance(command, str) or not command.strip():
+                raise ValueError(
+                    "terminal_command requires a non-empty command."
+                )
+
+            cwd = payload.get("cwd")
+
+            if cwd is not None and not isinstance(cwd, str):
+                raise ValueError(
+                    "terminal_command cwd must be a string."
+                )
+
+        try:
+            payload_json = json.dumps(
+                payload,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Durable task payload is not JSON serializable: {exc}"
+            ) from exc
+
+        task_id = str(uuid.uuid4())
         now = time.time()
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                INSERT INTO background_tasks (
+                    task_id,
+                    user_id,
+                    title,
+                    status,
+                    progress,
+                    logs,
+                    result,
+                    created_at,
+                    updated_at,
+                    task_type,
+                    payload
+                )
+                VALUES (
+                    ?, ?, ?, 'QUEUED', 0, '[]', NULL,
+                    ?, ?, ?, ?
+                )
+            """, (
+                task_id,
+                user_id,
+                title,
+                now,
+                now,
+                task_type,
+                payload_json,
+            ))
+
+            conn.commit()
+
+        return task_id
+
+    def update_task(
+        self,
+        task_id: str,
+        status: Optional[str] = None,
+        progress: Optional[int] = None,
+        new_log: Optional[str] = None,
+        result: Optional[Any] = None,
+    ):
+        now = time.time()
+
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT status, progress, logs FROM background_tasks WHERE task_id = ?", (task_id,))
+
+            cursor.execute("""
+                SELECT status, progress, logs
+                FROM background_tasks
+                WHERE task_id = ?
+            """, (task_id,))
+
             row = cursor.fetchone()
+
             if not row:
                 return
 
             curr_status, curr_prog, logs_str = row
+
             try:
-                logs_list = json.loads(logs_str)
+                logs_list = json.loads(logs_str or "[]")
             except Exception:
                 logs_list = []
 
             if new_log:
-                logs_list.append({"time": now, "message": new_log})
+                logs_list.append({
+                    "time": now,
+                    "message": new_log,
+                })
 
-            final_status = status or curr_status
-            final_prog = progress if progress is not None else curr_prog
-            res_str = json.dumps(result) if result is not None else None
+            final_status = (
+                status if status is not None else curr_status
+            )
+
+            final_prog = (
+                progress if progress is not None else curr_prog
+            )
+
+            res_str = (
+                json.dumps(result, ensure_ascii=False)
+                if result is not None
+                else None
+            )
 
             conn.execute("""
                 UPDATE background_tasks
-                SET status = ?, progress = ?, logs = ?, result = COALESCE(?, result), updated_at = ?
+                SET
+                    status = ?,
+                    progress = ?,
+                    logs = ?,
+                    result = COALESCE(?, result),
+                    updated_at = ?
                 WHERE task_id = ?
-            """, (final_status, final_prog, json.dumps(logs_list), res_str, now, task_id))
+            """, (
+                final_status,
+                final_prog,
+                json.dumps(logs_list, ensure_ascii=False),
+                res_str,
+                now,
+                task_id,
+            ))
+
             conn.commit()
 
-    def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
+    def get_task(
+        self,
+        task_id: str,
+    ) -> Optional[Dict[str, Any]]:
+
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
+
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM background_tasks WHERE task_id = ?", (task_id,))
+
+            cursor.execute("""
+                SELECT *
+                FROM background_tasks
+                WHERE task_id = ?
+            """, (task_id,))
+
             row = cursor.fetchone()
+
             if not row:
                 return None
+
             res = dict(row)
+
             try:
-                res["logs"] = json.loads(res["logs"])
+                res["logs"] = json.loads(
+                    res.get("logs") or "[]"
+                )
             except Exception:
                 pass
-            if res.get("result"):
+
+            if res.get("result") is not None:
                 try:
-                    res["result"] = json.loads(res["result"])
+                    res["result"] = json.loads(
+                        res["result"]
+                    )
                 except Exception:
                     pass
+
+            if res.get("payload") is not None:
+                try:
+                    res["payload"] = json.loads(
+                        res["payload"]
+                    )
+                except Exception:
+                    pass
+
             return res
 
-    def launch_in_background(self, user_id: str, title: str, worker_fn: Callable[[str], Any]) -> str:
-        task_id = self.create_task(user_id, title)
+    def recover_interrupted_tasks(self):
+        """
+        Recover tasks after a runtime/process interruption.
+
+        A task is surfaced only once using a persistent recovery marker.
+
+        RUNNING -> QUEUED
+        QUEUED -> remains QUEUED
+        COMPLETED/FAILED -> untouched
+        """
+
+        recovered = []
+        now = time.time()
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+
+            rows = conn.execute("""
+                SELECT task_id, status, logs
+                FROM background_tasks
+                WHERE status IN ('QUEUED', 'RUNNING')
+                ORDER BY created_at ASC
+            """).fetchall()
+
+            for row in rows:
+                task_id = row["task_id"]
+                status = row["status"]
+
+                try:
+                    logs = json.loads(
+                        row["logs"] or "[]"
+                    )
+                except Exception:
+                    logs = []
+
+                already_recovered = any(
+                    isinstance(entry, dict)
+                    and entry.get("type") == "runtime_recovery"
+                    for entry in logs
+                )
+
+                if already_recovered:
+                    continue
+
+                if status == "RUNNING":
+                    message = (
+                        "Task re-queued after runtime interruption."
+                    )
+                else:
+                    message = (
+                        "Queued task recovered by runtime."
+                    )
+
+                logs.append({
+                    "time": now,
+                    "type": "runtime_recovery",
+                    "message": message,
+                })
+
+                conn.execute("""
+                    UPDATE background_tasks
+                    SET
+                        status = 'QUEUED',
+                        logs = ?,
+                        updated_at = ?
+                    WHERE task_id = ?
+                      AND status IN ('QUEUED', 'RUNNING')
+                """, (
+                    json.dumps(
+                        logs,
+                        ensure_ascii=False,
+                    ),
+                    now,
+                    task_id,
+                ))
+
+                recovered.append(task_id)
+
+            conn.commit()
+
+        return recovered
+
+    def launch_in_background(
+        self,
+        user_id: str,
+        title: str,
+        worker_fn: Callable[[str], Any],
+    ) -> str:
+
+        task_id = self.create_task(
+            user_id,
+            title,
+        )
 
         def runner():
-            self.update_task(task_id, status="RUNNING", progress=10, new_log=f"Task '{title}' started in background.")
+
+            self.update_task(
+                task_id,
+                status="RUNNING",
+                progress=10,
+                new_log=(
+                    f"Task '{title}' started in background."
+                ),
+            )
+
             try:
                 out = worker_fn(task_id)
-                self.update_task(task_id, status="COMPLETED", progress=100, new_log="Task completed successfully.", result=out)
-            except Exception as e:
-                self.update_task(task_id, status="FAILED", progress=100, new_log=f"Task error: {str(e)}", result={"error": str(e)})
 
-        t = threading.Thread(target=runner, daemon=True)
-        t.start()
+                self.update_task(
+                    task_id,
+                    status="COMPLETED",
+                    progress=100,
+                    new_log="Task completed successfully.",
+                    result=out,
+                )
+
+            except Exception as e:
+
+                self.update_task(
+                    task_id,
+                    status="FAILED",
+                    progress=100,
+                    new_log=f"Task error: {str(e)}",
+                    result={"error": str(e)},
+                )
+
+        thread = threading.Thread(
+            target=runner,
+            daemon=True,
+        )
+
+        thread.start()
+
         return task_id
+
+
+class DurableTaskDispatcher:
+    """
+    Restart-safe dispatcher for allowlisted durable tasks.
+
+    The dispatcher reconstructs work only from persisted task_type + payload.
+    It never deserializes arbitrary Python code.
+    """
+
+    def __init__(self, manager: BackgroundTaskManager, brain=None):
+        self.manager = manager
+        self.brain = brain
+        self._dispatch_lock = threading.Lock()
+
+    def dispatch_task(self, task_id: str) -> bool:
+        # Only one dispatcher execution may claim work at a time
+        # inside this runtime process.
+        with self._dispatch_lock:
+            return self._dispatch_task_locked(task_id)
+
+    def dispatch_task_async(self, task_id: str) -> str:
+        """
+        Dispatch a persisted task without blocking the API request.
+
+        The task is already durable in SQLite before this method is called.
+        The worker thread only receives the task_id and reconstructs the
+        actual operation from the persisted allowlisted payload.
+        """
+        thread = threading.Thread(
+            target=self.dispatch_task,
+            args=(task_id,),
+            daemon=True,
+            name=f"aura-durable-{task_id[:8]}",
+        )
+        thread.start()
+        return task_id
+
+    def _dispatch_task_locked(self, task_id: str) -> bool:
+        task = self.manager.get_task(task_id)
+
+        if not task:
+            return False
+
+        if task.get("status") != "QUEUED":
+            return False
+
+        task_type = task.get("task_type")
+        payload = task.get("payload")
+
+        if task_type not in self.manager.ALLOWED_DURABLE_TASK_TYPES:
+            self.manager.update_task(
+                task_id,
+                status="FAILED",
+                progress=100,
+                new_log=(
+                    f"Unsupported durable task type: {task_type}"
+                ),
+                result={
+                    "success": False,
+                    "error": "UNSUPPORTED_TASK_TYPE",
+                },
+            )
+            return False
+
+        if not isinstance(payload, dict):
+            self.manager.update_task(
+                task_id,
+                status="FAILED",
+                progress=100,
+                new_log="Durable task payload is invalid.",
+                result={
+                    "success": False,
+                    "error": "INVALID_PAYLOAD",
+                },
+            )
+            return False
+
+        self.manager.update_task(
+            task_id,
+            status="RUNNING",
+            progress=10,
+            new_log="Durable task dispatcher started.",
+        )
+
+        try:
+            if task_type == "terminal_command":
+                result = self._execute_terminal(payload)
+
+            else:
+                raise ValueError(
+                    f"Unsupported durable task type: {task_type}"
+                )
+
+            success = bool(
+                isinstance(result, dict)
+                and result.get("success") is True
+            )
+
+            if success:
+                self.manager.update_task(
+                    task_id,
+                    status="COMPLETED",
+                    progress=100,
+                    new_log=(
+                        "Durable task executed and verified."
+                    ),
+                    result=result,
+                )
+                return True
+
+            self.manager.update_task(
+                task_id,
+                status="FAILED",
+                progress=100,
+                new_log="Durable task execution failed.",
+                result=result,
+            )
+            return False
+
+        except Exception as exc:
+            self.manager.update_task(
+                task_id,
+                status="FAILED",
+                progress=100,
+                new_log=f"Durable dispatcher error: {exc}",
+                result={
+                    "success": False,
+                    "error": str(exc),
+                },
+            )
+            return False
+
+    def _execute_terminal(self, payload: Dict[str, Any]):
+        command = payload.get("command")
+        cwd = payload.get("cwd")
+
+        if not isinstance(command, str) or not command.strip():
+            raise ValueError(
+                "terminal_command requires a non-empty command."
+            )
+
+        if self.brain is None:
+            raise RuntimeError(
+                "Terminal execution backend is not configured."
+            )
+
+        terminal = getattr(self.brain, "terminal", None)
+
+        if terminal is None:
+            raise RuntimeError(
+                "Terminal tool is not available."
+            )
+
+        return terminal.execute_command(
+            command=command,
+            cwd=cwd,
+        )
+
+    def dispatch_queued_tasks(self, limit: int = 10):
+        dispatched = []
+
+        with sqlite3.connect(self.manager.db_path) as conn:
+            rows = conn.execute("""
+                SELECT task_id
+                FROM background_tasks
+                WHERE status = 'QUEUED'
+                  AND task_type IS NOT NULL
+                ORDER BY created_at ASC
+                LIMIT ?
+            """, (limit,)).fetchall()
+
+        for (task_id,) in rows:
+            if self.dispatch_task(task_id):
+                dispatched.append(task_id)
+
+        return dispatched

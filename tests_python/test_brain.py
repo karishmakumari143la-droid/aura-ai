@@ -24,7 +24,7 @@ from python_brain.qa.qa_engine import QAEngine
 from python_brain.recovery.healer import ErrorHealer
 from python_brain.runtime.idempotency import IdempotencyEngine
 from python_brain.brain import AuraBrain
-from python_brain.reasoning import LLMReasoning
+from python_brain.aura_reasoning import AuraReasoning
 
 class TestAuraBrain(unittest.TestCase):
     def setUp(self):
@@ -194,62 +194,85 @@ class TestAuraBrain(unittest.TestCase):
         self.assertTrue(action_turn["execution_performed"])
         self.assertGreater(len(action_turn["files_created"]), 0)
 
-    # 9. GEMINI INTEGRATION & REASONING COMPREHENSIVE TESTS (A through L)
-    def test_a_gemini_sdk_initialization(self):
-        """A. Gemini SDK initialization"""
-        reasoner = LLMReasoning()
-        self.assertTrue(reasoner.sdk_installed, "google-genai SDK must be installed")
-        if reasoner.api_key:
-            self.assertTrue(reasoner.client_initialized, "Client should be initialized when API key exists")
-            diag = reasoner.get_diagnostics()
-            self.assertIn("sdk_installed", diag)
-            self.assertIn("reasoning_mode", diag)
+    # 9. AURA LOCAL REASONING ENGINE TESTS (A through E)
 
-    def test_b_missing_api_key(self):
-        """B. Missing API key fallback"""
-        reasoner = LLMReasoning(api_key="", auto_verify=False)
-        reasoner.api_key = None
-        self.assertFalse(reasoner.is_gemini_active(), "is_gemini_active must be false without API key")
-        self.assertEqual(reasoner.reasoning_mode, "HEURISTIC_FALLBACK")
-        # Ensure heuristic still reasons cleanly
-        res = reasoner.reason("Hello there")
-        self.assertEqual(res["intent"], "CONVERSATION")
-        self.assertEqual(res["conversation_or_action"], "conversation")
+    def test_a_local_reasoning_initialization(self):
+        """A. Local reasoning engine initializes without external providers."""
+        reasoner = AuraReasoning()
+        self.assertEqual(reasoner.engine, "AURA_LOCAL_REASONING")
+        self.assertEqual(reasoner.version, "1.0.0")
+        self.assertTrue(hasattr(reasoner, "reason"))
+        self.assertTrue(hasattr(reasoner, "get_diagnostics"))
 
-    def test_c_gemini_unavailable(self):
-        """C. Gemini unavailable fallback"""
-        reasoner = LLMReasoning(api_key="invalid_dummy_key", auto_verify=False)
-        reasoner.live_request_succeeded = False
-        self.assertFalse(reasoner.is_gemini_active())
-        self.assertEqual(reasoner.reasoning_mode, "HEURISTIC_FALLBACK")
-        # Offline reasoning must succeed deterministically
-        res = reasoner.reason("What is Docker?")
-        self.assertEqual(res["intent"], "QUESTION")
-        self.assertEqual(res["conversation_or_action"], "conversation")
+        diagnostics = reasoner.get_diagnostics()
+        self.assertEqual(diagnostics["engine"], "AURA_LOCAL_REASONING")
+        self.assertFalse(diagnostics["external_provider"])
+        self.assertFalse(diagnostics["api_key_required"])
 
-    def test_d_gemini_successful_reasoning(self):
-        """D. Gemini successful reasoning schema test"""
-        reasoner = LLMReasoning()
-        res = reasoner.reason("What is Python?")
-        # Must strictly have all 8 schema fields
-        required_fields = ["intent", "language", "goal", "conversation_or_action", "clarification", "plan", "tools", "response"]
-        for f in required_fields:
-            self.assertIn(f, res, f"Missing required schema field: {f}")
-        self.assertIn(res["intent"], ["CONVERSATION", "QUESTION", "ACTION_REQUEST", "CLARIFICATION", "FOLLOW_UP"])
-        self.assertIn(res["language"], ["english", "hindi", "hinglish"])
-        self.assertIn(res["conversation_or_action"], ["conversation", "action"])
+    def test_b_local_conversation_reasoning(self):
+        """B. Local reasoning handles conversation without an API."""
+        reasoner = AuraReasoning()
+        result = reasoner.reason("Hello AURA, kaise ho?")
 
-    def test_e_malformed_gemini_json(self):
-        """E. Malformed Gemini JSON safe handling"""
-        reasoner = LLMReasoning(auto_verify=False)
-        # Parse malformed JSON
-        malformed = "{intent: CONVERSATION, broken json string..."
-        result = reasoner._parse_and_validate_json(malformed, "Hello", "gemini-3.6-flash")
-        # Must either safely repair or return None (triggering heuristic fallback) without crashing
-        if result is not None:
-            self.assertIn("intent", result)
-            self.assertEqual(result["plan"], [])
-            self.assertEqual(result["tools"], [])
+        self.assertEqual(result["intent"], "CONVERSATION")
+        self.assertEqual(result["conversation_or_action"], "conversation")
+        self.assertEqual(result["plan"], [])
+        self.assertEqual(result["tools"], [])
+        self.assertIn("response", result)
+
+    def test_c_local_question_reasoning(self):
+        """C. Local reasoning handles explanatory questions."""
+        reasoner = AuraReasoning()
+        result = reasoner.reason("What is Python?")
+
+        self.assertEqual(result["intent"], "QUESTION")
+        self.assertEqual(result["conversation_or_action"], "conversation")
+        self.assertEqual(result["plan"], [])
+        self.assertEqual(result["tools"], [])
+        self.assertIn("response", result)
+
+    def test_d_local_action_reasoning(self):
+        """D. Local reasoning creates deterministic plans for real work."""
+        reasoner = AuraReasoning()
+        result = reasoner.reason("create a gym website with dark theme")
+
+        self.assertEqual(result["intent"], "ACTION_REQUEST")
+        self.assertEqual(result["conversation_or_action"], "action")
+        self.assertGreater(len(result["plan"]), 0)
+        self.assertIn("filesystem_write", result["tools"])
+        self.assertIn("qa_verify_site", result["tools"])
+
+    def test_e_local_reasoning_schema(self):
+        """E. Local reasoning returns the complete cognitive schema."""
+        reasoner = AuraReasoning()
+        result = reasoner.reason("create a portfolio website")
+
+        required_fields = [
+            "intent",
+            "language",
+            "goal",
+            "conversation_or_action",
+            "clarification",
+            "plan",
+            "tools",
+            "response",
+        ]
+
+        for field in required_fields:
+            self.assertIn(field, result, f"Missing reasoning field: {field}")
+
+        self.assertIn(
+            result["intent"],
+            ["CONVERSATION", "QUESTION", "ACTION_REQUEST", "CLARIFICATION"],
+        )
+        self.assertIn(
+            result["language"],
+            ["english", "hindi", "hinglish"],
+        )
+        self.assertIn(
+            result["conversation_or_action"],
+            ["conversation", "action"],
+        )
 
     def test_f_greeting_distinction(self):
         """F. Greeting: Hello AURA, kaise ho? -> CONVERSATION, 0 tasks, 0 tools"""

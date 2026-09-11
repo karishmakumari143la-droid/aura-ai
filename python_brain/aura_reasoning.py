@@ -109,6 +109,71 @@ class AuraReasoning:
                 "response": self._conversation_reply(low, language),
             }
 
+        # Language preference is conversational, never an executable action.
+        language_preferences = [
+            "hindi mein baat karo",
+            "hindi me baat karo",
+            "english mein baat karo",
+            "english me baat karo",
+            "hinglish mein baat karo",
+            "hinglish me baat karo",
+            "हिंदी में बात करो",
+            "हिंदी में बात करें",
+        ]
+
+        if any(x in low or x in text for x in language_preferences):
+            requested_language = (
+                "hindi"
+                if "hindi" in low or "हिंदी" in text
+                else "hinglish"
+                if "hinglish" in low
+                else "english"
+            )
+            response = {
+                "hindi": "Bilkul. Ab main aapse Hindi mein baat karungi.",
+                "hinglish": "Bilkul. Ab main aapse natural Hinglish mein baat karungi.",
+                "english": "Sure. I’ll continue speaking with you in English.",
+            }[requested_language]
+
+            return {
+                "intent": "CONVERSATION",
+                "language": requested_language,
+                "goal": "Language preference",
+                "conversation_or_action": "conversation",
+                "clarification": None,
+                "plan": [],
+                "tools": [],
+                "response": response,
+            }
+
+        # Gratitude / acknowledgement is conversational, never a task.
+        gratitude = [
+            "shukriya",
+            "dhanyavaad",
+            "thanks",
+            "thank you",
+            "thankyou",
+            "thx",
+            "bahut accha",
+            "bahut acha",
+            "great",
+            "perfect",
+            "okay thanks",
+            "ok thanks",
+        ]
+
+        if any(x == low.strip(" .!?") or x in low for x in gratitude):
+            return {
+                "intent": "CONVERSATION",
+                "language": language,
+                "goal": "Acknowledgement",
+                "conversation_or_action": "conversation",
+                "clarification": None,
+                "plan": [],
+                "tools": [],
+                "response": self._conversation_reply(low, language),
+            }
+
         # -----------------------------
         # QUESTIONS
         # -----------------------------
@@ -122,6 +187,15 @@ class AuraReasoning:
             "how do",
             "explain",
             "define",
+            "who made you",
+            "who created you",
+            "who built you",
+            "who are you",
+            "tell me about yourself",
+            "tell me a joke",
+            "joke sunao",
+            "joke batao",
+            "make me laugh",
             "kya hai",
             "kya hota hai",
             "kyun",
@@ -237,6 +311,63 @@ class AuraReasoning:
 
                 return steps
 
+        # File creation / write
+        # Must run before generic code/file inspection rules.
+        file_action = re.search(
+            r"(?:create|make|write|save|banao|bana)\s+"
+            r"(?:a\s+|an\s+|the\s+)?"
+            r"(?:test\s+|new\s+)?"
+            r"file\s+(?:called|named)?\s*"
+            r"([A-Za-z0-9_./-]+)",
+            goal,
+            re.IGNORECASE,
+        )
+
+        if file_action:
+            file_path = file_action.group(1).strip()
+
+            content_match = re.search(
+                r"(?:write|with|containing)\s+(.+?)"
+                r"(?=\s+(?:into|in|to)\s+(?:it|the\s+file|that\s+file)\b|$)",
+                goal,
+                re.IGNORECASE,
+            )
+
+            content = (
+                content_match.group(1).strip().strip('"').strip("'")
+                if content_match
+                else ""
+            )
+
+            steps.append({
+                "step_id": 1,
+                "tool": "filesystem_write",
+                "description": f"Create or update file {file_path}",
+                "args": {
+                    "path": file_path,
+                    "content": content,
+                },
+                "verification": (
+                    "Verify that the requested file exists "
+                    "with the requested content"
+                ),
+            })
+
+            steps.append({
+                "step_id": 2,
+                "tool": "filesystem_read",
+                "description": f"Verify the contents of {file_path}",
+                "args": {
+                    "path": file_path,
+                },
+                "verification": (
+                    "Verify the file exists and its contents "
+                    "match the requested content"
+                ),
+            })
+
+            return steps
+
         # Website / web app
         if any(x in low for x in [
             "website",
@@ -268,6 +399,81 @@ class AuraReasoning:
                 "args": {},
                 "verification": "Verify HTML, assets and required interactions",
             })
+
+            steps.append({
+                "step_id": 3,
+                "tool": "browser_e2e",
+                "description": "Open the generated website in a real browser and verify it renders",
+                "args": {
+                    "target": "active_project/index.html",
+                    "actions": [],
+                    "verify_condition": {
+                        "type": "title_non_empty"
+                    }
+                },
+                "verification": "Verify the generated website opens successfully in Playwright and has a non-empty page title",
+            })
+
+            return steps
+
+        # Terminal / shell command
+        if (
+            "run terminal command" in low
+            or "run the terminal command" in low
+            or "run a terminal command" in low
+            or "run command" in low
+            or "run the command" in low
+            or "run a command" in low
+            or "execute terminal command" in low
+            or "execute the terminal command" in low
+            or "execute a terminal command" in low
+            or "execute command" in low
+            or "execute the command" in low
+            or "execute a command" in low
+            or low.startswith("terminal ")
+            or low.startswith("run ")
+        ):
+            command = goal.strip()
+
+            prefixes = [
+                "run terminal command",
+                "execute terminal command",
+                "run the terminal command",
+                "execute the terminal command",
+                "run a terminal command",
+                "execute a terminal command",
+                "run command",
+                "execute command",
+                "run the command",
+                "execute the command",
+                "run a command",
+                "execute a command",
+                "terminal command",
+                "terminal",
+                "run",
+            ]
+
+            for prefix in prefixes:
+                if command.lower().startswith(prefix):
+                    command = command[len(prefix):].strip()
+                    break
+
+            if command:
+                steps.append({
+                    "step_id": 1,
+                    "tool": "terminal_execute",
+                    "description": "Execute the requested terminal command",
+                    "args": {"command": command},
+                    "verification": "Verify the terminal command completed successfully",
+                })
+            else:
+                steps.append({
+                    "step_id": 1,
+                    "tool": "terminal_execute",
+                    "description": "Execute the requested terminal command",
+                    "args": {"command": ""},
+                    "verification": "Verify the terminal command completed successfully",
+                })
 
             return steps
 

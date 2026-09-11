@@ -282,6 +282,65 @@ export class AuraDB {
     return row ? row.password_hash : null;
   }
 
+  // ==================== GOOGLE IDENTITY ====================
+  static getUserByGoogleSub(googleSub: string): User | null {
+    const row = db.prepare(`
+      SELECT u.*
+      FROM google_identities g
+      JOIN users u ON g.user_id = u.id
+      WHERE g.google_sub = ?
+    `).get(googleSub) as any;
+
+    if (!row) return null;
+
+    return {
+      id: row.id,
+      email: row.email,
+      name: row.name,
+      role: row.role,
+      createdAt: row.created_at,
+      isOwner: Boolean(row.is_owner)
+    };
+  }
+
+  static createGoogleIdentity(
+    googleSub: string,
+    userId: string,
+    email: string
+  ): void {
+    const now = new Date().toISOString();
+
+    db.prepare(`
+      INSERT INTO google_identities
+        (google_sub, user_id, email, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(
+      googleSub,
+      userId,
+      email.toLowerCase().trim(),
+      now,
+      now
+    );
+  }
+
+  static getGoogleIdentityByUserId(userId: string): {
+    googleSub: string;
+    email: string;
+  } | null {
+    const row = db.prepare(`
+      SELECT google_sub, email
+      FROM google_identities
+      WHERE user_id = ?
+    `).get(userId) as any;
+
+    if (!row) return null;
+
+    return {
+      googleSub: row.google_sub,
+      email: row.email
+    };
+  }
+
   // ==================== SESSIONS ====================
   static createSession(token: string, userId: string, maxAgeMs = 7 * 24 * 60 * 60 * 1000): void {
     const now = new Date().toISOString();
@@ -381,6 +440,121 @@ export class AuraDB {
       ctx.websiteRequirements ? JSON.stringify(ctx.websiteRequirements) : '[]',
       now
     );
+  }
+
+  // ==================== TASK COMPATIBILITY ====================
+
+  static upsertTask(task: any, idempotencyKey?: string): void {
+    const now = new Date().toISOString();
+    const key = idempotencyKey || task.idempotencyKey || task.taskId;
+
+    db.prepare(`
+      INSERT INTO tasks (
+        task_id,
+        user_id,
+        project_id,
+        title,
+        description,
+        status,
+        priority,
+        nodes_json,
+        edges_json,
+        messages_json,
+        logs_json,
+        error,
+        result,
+        verification,
+        idempotency_key,
+        created_at,
+        updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(task_id) DO UPDATE SET
+        project_id = excluded.project_id,
+        title = excluded.title,
+        description = excluded.description,
+        status = excluded.status,
+        priority = excluded.priority,
+        nodes_json = excluded.nodes_json,
+        edges_json = excluded.edges_json,
+        messages_json = excluded.messages_json,
+        logs_json = excluded.logs_json,
+        error = excluded.error,
+        result = excluded.result,
+        verification = excluded.verification,
+        idempotency_key = excluded.idempotency_key,
+        updated_at = excluded.updated_at
+    `).run(
+      task.taskId,
+      task.userId,
+      task.projectId || null,
+      task.title || 'AURA Task',
+      task.description || null,
+      task.status || 'RUNNING',
+      task.priority || 'normal',
+      JSON.stringify(task.nodes || []),
+      JSON.stringify(task.edges || []),
+      JSON.stringify(task.messages || []),
+      JSON.stringify(task.logs || []),
+      task.error || null,
+      task.result == null
+        ? null
+        : typeof task.result === 'string'
+          ? task.result
+          : JSON.stringify(task.result),
+      task.verification == null
+        ? null
+        : typeof task.verification === 'string'
+          ? task.verification
+          : JSON.stringify(task.verification),
+      key,
+      task.createdAt || now,
+      task.updatedAt || now
+    );
+  }
+
+  static getTaskByIdempotencyKey(idempotencyKey: string): any | null {
+    const row = db.prepare(`
+      SELECT *
+      FROM tasks
+      WHERE idempotency_key = ?
+      LIMIT 1
+    `).get(idempotencyKey) as any;
+
+    if (!row) return null;
+
+    const parseJson = (value: any, fallback: any) => {
+      if (value == null || value === '') return fallback;
+      try {
+        return JSON.parse(value);
+      } catch {
+        return fallback;
+      }
+    };
+
+    return {
+      taskId: row.task_id,
+      userId: row.user_id,
+      projectId: row.project_id || undefined,
+      title: row.title,
+      description: row.description || undefined,
+      status: row.status,
+      priority: row.priority,
+      nodes: parseJson(row.nodes_json, []),
+      edges: parseJson(row.edges_json, []),
+      messages: parseJson(row.messages_json, []),
+      logs: parseJson(row.logs_json, []),
+      error: row.error || undefined,
+      result: row.result == null
+        ? undefined
+        : parseJson(row.result, row.result),
+      verification: row.verification == null
+        ? undefined
+        : parseJson(row.verification, row.verification),
+      idempotencyKey: row.idempotency_key || undefined,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    };
   }
 
   // ==================== PROJECTS & QUOTA ====================

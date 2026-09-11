@@ -133,18 +133,15 @@ export const Navbar: React.FC<NavbarProps> = ({
           </button>
         )}
 
-        {!user?.isOwner && (
-
-                <button
-                  onClick={onOpenAuth}
-                  className="w-full text-left px-2 py-2 rounded text-xs text-rose-400 hover:bg-rose-950/30 flex items-center gap-2 mt-1"
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                  <span>Switch Account / Sign In</span>
-                </button>
-              </div>
-            )}
-          </div>
+          {!user?.isOwner && (
+            <button
+              onClick={onOpenAuth}
+              className="w-full text-left px-2 py-2 rounded text-xs text-rose-400 hover:bg-rose-950/30 flex items-center gap-2 mt-1"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Switch Account / Sign In</span>
+            </button>
+          )}
         ) : (
           <button
             onClick={onOpenAuth}
@@ -152,7 +149,6 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             Sign In
           </button>
-        )}
       </div>
     </header>
   );

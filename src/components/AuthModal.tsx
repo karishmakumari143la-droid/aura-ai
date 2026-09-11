@@ -7,7 +7,6 @@ import {
   ArrowRight, 
   Sparkles, 
   ShieldCheck,
-  Chrome,
   Smartphone,
   KeyRound
 } from 'lucide-react';
@@ -81,152 +80,169 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in">
-      <div className="relative w-full max-w-3xl rounded-3xl bg-slate-950 border border-white/10 shadow-2xl overflow-hidden grid grid-cols-1 md:grid-cols-2">
-        {/* Close Button */}
-        <button
-          onClick={onClose}
-          className="absolute top-4 right-4 z-20 p-2 rounded-full bg-slate-900/80 text-slate-400 hover:text-white border border-slate-800 transition"
-        >
-          <X className="w-4 h-4" />
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#03050b]/95 px-4 py-6 backdrop-blur-2xl animate-in fade-in duration-300">
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div className="absolute left-1/4 top-1/4 h-80 w-80 rounded-full bg-cyan-500/[0.06] blur-[110px]" />
+        <div className="absolute bottom-1/4 right-1/4 h-96 w-96 rounded-full bg-indigo-500/[0.07] blur-[130px]" />
+      </div>
+
+      <div className="relative w-full max-w-[880px] overflow-hidden rounded-[32px] border border-white/[0.07] bg-[#090c14]/90 shadow-[0_40px_140px_rgba(0,0,0,0.7)]">
+        <button onClick={onClose} aria-label="Close"
+          className="absolute right-5 top-5 z-30 flex h-9 w-9 items-center justify-center rounded-full border border-white/[0.08] bg-white/[0.035] text-slate-500 transition hover:bg-white/[0.08] hover:text-white">
+          <X className="h-4 w-4" />
         </button>
 
-        {/* Left Visual Branding Panel */}
-        <div className="hidden md:flex flex-col justify-between p-8 bg-gradient-to-br from-slate-900 via-indigo-950/40 to-slate-950 border-r border-white/5 relative overflow-hidden">
-          <div className="relative z-10">
-            <div className="mb-4"><AuraLogo size={38} /></div>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              YOUR LIVING AI UNIVERSE
-            </p>
-          </div>
-
-          <div className="relative z-10 my-8 flex justify-center">
-            <AIOrb state="IDLE" size="md" showLabel={false} />
-          </div>
-
-          <div className="relative z-10 space-y-2 text-[11px] text-slate-400">
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="w-3.5 h-3.5 text-cyan-400" />
-              <span>Secure server-side sessions</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-              <span>AURA Intelligence Core</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Right Form Panel */}
-        <div className="p-6 sm:p-8 flex flex-col justify-between">
-          <div>
-            <h3 className="text-xl font-bold text-white">
-              {mode === 'login' ? 'Welcome back to AURA' : mode === 'register' ? 'Create your AURA account' : mode === 'forgot' ? 'Reset password' : mode === 'emailOtp' ? 'Email OTP' : 'Mobile OTP'}
-            </h3>
-            <p className="text-xs text-slate-400 mt-1">
-              Your projects, memory, permissions, and quota stay tied to your account.
-            </p>
-
-            {message && (
-              <div className="mt-3 p-2.5 rounded-xl bg-cyan-950/50 border border-cyan-500/40 text-xs text-cyan-300">
-                {message}
-              </div>
-            )}
-
-            <form onSubmit={handleSubmit} className="mt-5 space-y-3">
-              {mode === 'register' && (
-                <div>
-                  <label className="text-[11px] font-semibold text-slate-400 uppercase">Your Name</label>
-                  <div className="relative mt-1">
-                    <User className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
-                    <input
-                      type="text"
-                      required
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      placeholder="Jane Doe"
-                      className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
-                    />
-                  </div>
+        <div className="grid min-h-[570px] md:grid-cols-[1fr_1.05fr]">
+          <section className="relative hidden overflow-hidden border-r border-white/[0.06] px-10 py-10 md:flex md:flex-col">
+            <div className="relative z-10">
+              <AuraLogo size={46} />
+              <div className="mt-14">
+                <div className="mb-4 flex items-center gap-2">
+                  <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 shadow-[0_0_14px_rgba(34,211,238,0.9)]" />
+                  <span className="text-[10px] font-medium uppercase tracking-[0.3em] text-cyan-300/80">AURA AI</span>
                 </div>
-              )}
+                <h2 className="text-[38px] font-semibold leading-[1.08] tracking-[-0.03em] text-white">
+                  Intelligence,<br />made personal.
+                </h2>
+                <p className="mt-5 max-w-[285px] text-sm leading-6 text-slate-500">
+                  Talk naturally. Build, create and get real work done with AURA.
+                </p>
+              </div>
+            </div>
+
+            <div className="relative mt-auto flex items-center justify-center py-4">
+              <div className="absolute h-56 w-56 rounded-full border border-cyan-400/[0.08] animate-pulse" />
+              <div className="absolute h-72 w-72 rounded-full border border-indigo-400/[0.05]" />
+              <AIOrb state="IDLE" size="md" showLabel={false} />
+            </div>
+
+            <div className="relative z-10 mt-6 flex items-center gap-2 text-[10px] text-slate-600">
+              <ShieldCheck className="h-3.5 w-3.5 text-cyan-400/60" />
+              <span>Private, account-based access</span>
+            </div>
+          </section>
+
+          <section className="flex flex-col justify-between px-6 py-9 sm:px-12">
+            <div>
+              <div className="mb-10 md:hidden">
+                <AuraLogo size={42} />
+              </div>
 
               <div>
-                <label className="text-[11px] font-semibold text-slate-400 uppercase">Work Email</label>
-                <div className="relative mt-1">
-                  <Mail className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
-                  <input
-                    type="email"
-                    required
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="name@company.com"
-                    className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
-                  />
-                </div>
+                <span className="text-[10px] font-semibold uppercase tracking-[0.28em] text-slate-600">Welcome</span>
+                <h3 className="mt-2 text-[28px] font-semibold tracking-[-0.02em] text-white">
+                  {mode === 'login' ? 'Continue to AURA.'
+                    : mode === 'register' ? 'Create your AURA.'
+                    : mode === 'forgot' ? 'Reset your password.'
+                    : mode === 'emailOtp' ? 'Verify your email.'
+                    : 'Verify your mobile.'}
+                </h3>
+                <p className="mt-2 text-sm text-slate-500">
+                  {mode === 'login'
+                    ? 'Sign in to continue where you left off.'
+                    : mode === 'register'
+                    ? 'Create your personal AI workspace.'
+                    : 'Complete the secure verification step.'}
+                </p>
               </div>
 
-              {mode !== 'forgot' && mode !== 'emailOtp' && mode !== 'mobileOtp' && (
-                <div>
-                  <div className="flex justify-between items-center">
-                    <label className="text-[11px] font-semibold text-slate-400 uppercase">Password</label>
-                    {mode === 'login' && (
-                      <button
-                        type="button"
-                        onClick={() => setMode('forgot')}
-                        className="text-[10px] text-cyan-400 hover:underline"
-                      >
-                        Forgot?
-                      </button>
-                    )}
-                  </div>
-                  <div className="relative mt-1">
-                    <Lock className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
-                    <input
-                      type="password"
-                      required
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="••••••••••••"
-                      className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
-                    />
-                  </div>
+              {message && (
+                <div className="mt-6 rounded-2xl border border-cyan-400/15 bg-cyan-400/[0.05] px-4 py-3 text-xs leading-5 text-cyan-200">
+                  {message}
                 </div>
               )}
 
-              <button
-                type="submit"
-                disabled={isLoading}
-                className="w-full mt-2 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 hover:opacity-90 text-white font-bold text-xs shadow-lg shadow-cyan-500/20 flex items-center justify-center gap-2 transition"
-              >
-                <span>{isLoading ? 'Checking...' : mode === 'login' ? 'Sign In' : mode === 'register' ? 'Create Account' : 'Send Reset Link'}</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-            </form>
+              <form onSubmit={handleSubmit} className="mt-7 space-y-4">
+                {mode === 'register' && (
+                  <div>
+                    <label className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-600">Name</label>
+                    <div className="relative">
+                      <User className="absolute left-3.5 top-3 h-4 w-4 text-slate-600" />
+                      <input type="text" required value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name"
+                        className="h-11 w-full rounded-xl border border-white/[0.07] bg-white/[0.025] pl-10 pr-3 text-sm text-white outline-none transition placeholder:text-slate-700 focus:border-cyan-400/40 focus:bg-white/[0.04]" />
+                    </div>
+                  </div>
+                )}
 
-            <div className="mt-4 grid grid-cols-2 gap-2 border-t border-slate-800 pt-3">
-              <button type="button" onClick={() => handleProviderAction('/api/auth/google')} className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-slate-900 px-2 py-2 text-[11px] font-semibold text-slate-200 hover:border-cyan-400/50"><Chrome className="h-3.5 w-3.5" /> Google</button>
-              <button type="button" onClick={() => setMode('mobileOtp')} className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-slate-900 px-2 py-2 text-[11px] font-semibold text-slate-200 hover:border-cyan-400/50"><Smartphone className="h-3.5 w-3.5" /> Mobile OTP</button>
-              <button type="button" onClick={() => setMode('emailOtp')} className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-slate-900 px-2 py-2 text-[11px] font-semibold text-slate-200 hover:border-cyan-400/50"><KeyRound className="h-3.5 w-3.5" /> Email OTP</button>
+                <div>
+                  <label className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-600">Email</label>
+                  <div className="relative">
+                    <Mail className="absolute left-3.5 top-3 h-4 w-4 text-slate-600" />
+                    <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com"
+                      className="h-11 w-full rounded-xl border border-white/[0.07] bg-white/[0.025] pl-10 pr-3 text-sm text-white outline-none transition placeholder:text-slate-700 focus:border-cyan-400/40 focus:bg-white/[0.04]" />
+                  </div>
+                </div>
+
+                {mode !== 'forgot' && mode !== 'emailOtp' && mode !== 'mobileOtp' && (
+                  <div>
+                    <div className="mb-2 flex items-center justify-between">
+                      <label className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-600">Password</label>
+                      {mode === 'login' && (
+                        <button type="button" onClick={() => setMode('forgot')} className="text-[11px] text-slate-500 transition hover:text-cyan-300">
+                          Forgot?
+                        </button>
+                      )}
+                    </div>
+                    <div className="relative">
+                      <Lock className="absolute left-3.5 top-3 h-4 w-4 text-slate-600" />
+                      <input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Your password"
+                        className="h-11 w-full rounded-xl border border-white/[0.07] bg-white/[0.025] pl-10 pr-3 text-sm text-white outline-none transition placeholder:text-slate-700 focus:border-cyan-400/40 focus:bg-white/[0.04]" />
+                    </div>
+                  </div>
+                )}
+
+                <button type="submit" disabled={isLoading}
+                  className="group flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-cyan-300 text-sm font-semibold text-[#031017] transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-60">
+                  <span>{isLoading ? 'Please wait…'
+                    : mode === 'login' ? 'Continue'
+                    : mode === 'register' ? 'Create account'
+                    : mode === 'forgot' ? 'Send reset link'
+                    : 'Continue'}</span>
+                  <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+                </button>
+              </form>
+
+              {mode === 'login' && (
+                <>
+                  <div className="my-6 flex items-center gap-3">
+                    <div className="h-px flex-1 bg-white/[0.06]" />
+                    <span className="text-[9px] uppercase tracking-[0.25em] text-slate-700">or</span>
+                    <div className="h-px flex-1 bg-white/[0.06]" />
+                  </div>
+
+                  <button type="button" onClick={() => handleProviderAction('/api/auth/google')} disabled={isLoading}
+                    className="flex h-11 w-full items-center justify-center gap-3 rounded-xl border border-white/[0.09] bg-white/[0.025] text-sm font-medium text-slate-200 transition hover:border-white/[0.18] hover:bg-white/[0.055] disabled:opacity-60">
+                    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5">
+  <path fill="#4285F4" d="M21.35 12.27c0-.71-.06-1.39-.18-2.05H12v3.88h5.24a4.48 4.48 0 0 1-1.94 2.94v2.44h3.14c1.84-1.69 2.91-4.18 2.91-7.21Z"/>
+  <path fill="#34A853" d="M12 21.75c2.63 0 4.84-.87 6.45-2.35l-3.14-2.44c-.87.58-1.98.93-3.31.93-2.55 0-4.71-1.72-5.49-4.04H3.27v2.52A9.75 9.75 0 0 0 12 21.75Z"/>
+  <path fill="#FBBC05" d="M6.51 13.85A5.86 5.86 0 0 1 6.2 12c0-.64.11-1.26.31-1.85V7.63H3.27A9.75 9.75 0 0 0 2.25 12c0 1.57.38 3.06 1.02 4.37l3.24-2.52Z"/>
+  <path fill="#EA4335" d="M12 6.11c1.43 0 2.71.49 3.72 1.46l2.79-2.79C16.84 3.16 14.63 2.25 12 2.25a9.75 9.75 0 0 0-8.73 5.38l3.24 2.52C7.29 7.83 9.45 6.11 12 6.11Z"/>
+</svg>
+                    <span>Continue with Google</span>
+                  </button>
+
+                  <div className="mt-3 grid grid-cols-2 gap-3">
+                    <button type="button" onClick={() => setMode('mobileOtp')}
+                      className="h-10 rounded-xl border border-white/[0.06] bg-transparent text-xs text-slate-500 transition hover:border-white/[0.12] hover:text-slate-300">
+                      Mobile OTP
+                    </button>
+                    <button type="button" onClick={() => setMode('emailOtp')}
+                      className="h-10 rounded-xl border border-white/[0.06] bg-transparent text-xs text-slate-500 transition hover:border-white/[0.12] hover:text-slate-300">
+                      Email OTP
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
-          </div>
 
-          <div className="mt-4 pt-3 text-center text-xs text-slate-400">
-            {mode === 'login' ? (
-              <p>
-                Don't have an account?{' '}
-                <button onClick={() => setMode('register')} className="text-cyan-400 font-semibold hover:underline">
-                  Create Account
-                </button>
-              </p>
-            ) : (
-              <p>
-                Already have an account?{' '}
-                <button onClick={() => setMode('login')} className="text-cyan-400 font-semibold hover:underline">
-                  Sign In
-                </button>
-              </p>
-            )}
-          </div>
+            <div className="mt-9 border-t border-white/[0.06] pt-5 text-center text-xs text-slate-600">
+              {mode === 'login' ? (
+                <p>New to AURA? <button onClick={() => setMode('register')} className="ml-1 text-slate-300 transition hover:text-cyan-300">Create an account</button></p>
+              ) : (
+                <p>Already have an account? <button onClick={() => setMode('login')} className="ml-1 text-slate-300 transition hover:text-cyan-300">Sign in</button></p>
+              )}
+            </div>
+          </section>
         </div>
       </div>
     </div>

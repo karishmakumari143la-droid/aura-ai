@@ -92,6 +92,9 @@ export default function App() {
       setIsAuthOpen(true);
       return;
     }
+
+    setIsAuthOpen(false);
+
     if (!welcomeShownRef.current) {
       welcomeShownRef.current = true;
       const welcome = navigator.language.toLowerCase().startsWith('hi')

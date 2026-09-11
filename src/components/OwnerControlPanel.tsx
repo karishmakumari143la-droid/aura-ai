@@ -218,12 +218,13 @@ export const OwnerControlPanel: React.FC<OwnerControlPanelProps> = ({ onClose })
                     </td>
                     <td className="p-3.5">
                     </td>
-                    <td className="p-3.5 text-right">
-                      {!u.isOwner ? (
-                      ) : (
-                        <span className="text-[10px] text-amber-400 font-mono">Protected Master</span>
-                      )}
-                    </td>
+                      <td className="p-3.5 text-right">
+                        {u.isOwner ? (
+                          <span className="text-[10px] text-amber-400 font-mono">Protected Master</span>
+                        ) : (
+                          <span className="text-[10px] text-slate-500 font-mono">Standard User</span>
+                        )}
+                      </td>
                   </tr>
                 ))}
               </tbody>

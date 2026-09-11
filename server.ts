@@ -32,6 +32,13 @@ import { recordAuditLog, getAuditLogs } from './src/server/audit/auditLogger';
 import { AuraDB } from './src/server/db/auraDb';
 import { RealExecutor } from './src/server/runtime/realExecutor';
 import { N8NClient } from './src/server/integrations/n8nClient';
+import {
+  getGoogleOAuthConfig,
+  getGoogleAuthorizationUrl,
+  validateAndConsumeGoogleState,
+  exchangeGoogleCode,
+  resolveGoogleCallbackUrl
+} from './src/server/auth/googleOAuth';
 
 dotenv.config();
 
@@ -92,7 +99,7 @@ function setSession(res: Response, user: User): void {
   const token = randomBytes(32).toString('hex');
   sessions.set(token, user.id);
   AuraDB.createSession(token, user.id, 604800000);
-  res.setHeader('Set-Cookie', `aura_session=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800`);
+  res.setHeader('Set-Cookie', `aura_session=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=604800`);
 }
 
 function getSessionUser(req: Request): User | undefined {
@@ -628,7 +635,7 @@ async function startServer() {
         AuraDB.deleteSession(token);
       } catch {}
     }
-    res.setHeader('Set-Cookie', 'aura_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0');
+    res.setHeader('Set-Cookie', 'aura_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0');
     return res.json({ user: null });
   });
 
@@ -636,7 +643,102 @@ async function startServer() {
     return res.status(501).json({ status: 'NOT_CONFIGURED', error: 'PASSWORD_RESET_SETUP_REQUIRED', message: 'Password reset email delivery is not configured on this server.' });
   });
 
-  app.post('/api/auth/google', (_req: Request, res: Response) => res.status(501).json({ status: 'NOT_CONFIGURED', error: 'GOOGLE_AUTH_SETUP_REQUIRED', message: 'Google OAuth credentials (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET) are not configured on this server.' }));
+  // Real Google OAuth Login
+  app.get('/api/auth/google', (req: Request, res: Response) => {
+    const config = getGoogleOAuthConfig();
+
+    if (!config.isConfigured) {
+      return res.status(503).json({
+        status: 'NOT_CONFIGURED',
+        error: 'GOOGLE_AUTH_SETUP_REQUIRED',
+        message: 'Google OAuth credentials are not configured on this server.'
+      });
+    }
+
+    try {
+      const authorizationUrl = getGoogleAuthorizationUrl(req);
+      return res.redirect(302, authorizationUrl);
+    } catch (error) {
+      console.error('[Google OAuth] Authorization start failed:', error);
+      return res.status(500).json({
+        status: 'ERROR',
+        error: 'GOOGLE_AUTH_START_FAILED',
+        message: 'Unable to start Google authentication.'
+      });
+    }
+  });
+
+  app.get('/api/auth/google/callback', async (req: Request, res: Response) => {
+    const config = getGoogleOAuthConfig();
+
+    if (!config.isConfigured) {
+      return res.status(503).json({
+        status: 'NOT_CONFIGURED',
+        error: 'GOOGLE_AUTH_SETUP_REQUIRED',
+        message: 'Google OAuth credentials are not configured on this server.'
+      });
+    }
+
+    const { code, state, error } = req.query;
+
+    if (error) {
+      return res.status(400).send('Google authentication was cancelled or denied.');
+    }
+
+    if (typeof code !== 'string' || typeof state !== 'string') {
+      return res.status(400).send('Invalid Google OAuth callback.');
+    }
+
+    const stateResult = validateAndConsumeGoogleState(state);
+
+    if (!stateResult.valid) {
+      return res.status(400).send('Invalid or expired Google authentication request.');
+    }
+
+    try {
+      const googleUser = await exchangeGoogleCode(req, code);
+
+      // First preference: an already-linked Google identity.
+      let user = AuraDB.getUserByGoogleSub(googleUser.googleSub);
+
+      if (!user) {
+        // Existing AURA account with the same verified email.
+        user = AuraDB.getUserByEmail(googleUser.email);
+
+        if (!user) {
+          // Google-created accounts are ALWAYS FREE_USER.
+          user = {
+            id: 'usr-' + randomBytes(9).toString('hex'),
+            email: googleUser.email,
+            name: googleUser.name,
+            role: 'FREE_USER',
+            createdAt: new Date().toISOString(),
+            isOwner: false,
+            avatarUrl: googleUser.avatarUrl
+          };
+
+          users.push(user);
+          AuraDB.upsertUser(user);
+          AuraDB.initDefaultPermissions(user.id);
+        }
+
+        AuraDB.createGoogleIdentity(
+          googleUser.googleSub,
+          user.id,
+          googleUser.email
+        );
+      }
+
+      // Existing AURA session mechanism is reused for Google login.
+      setSession(res, user);
+
+      const returnTo = stateResult.returnTo || '/';
+      return res.redirect(302, returnTo);
+    } catch (error) {
+      console.error('[Google OAuth] Callback failed:', error);
+      return res.status(401).send('Google authentication could not be completed.');
+    }
+  });
   app.post('/api/auth/email-otp', (_req: Request, res: Response) => res.status(501).json({ status: 'NOT_CONFIGURED', error: 'EMAIL_OTP_SETUP_REQUIRED', message: 'Email OTP delivery gateway (SMTP / Resend) is not configured on this server.' }));
   app.post('/api/auth/mobile-otp', (_req: Request, res: Response) => res.status(501).json({ status: 'NOT_CONFIGURED', error: 'MOBILE_OTP_SETUP_REQUIRED', message: 'Mobile OTP delivery gateway (Twilio / Fast2SMS) is not configured on this server.' }));
 
@@ -886,7 +988,7 @@ async function startServer() {
     recordProjectCreation(currentUser, siteId);
     websites.unshift(newSite);
     try {
-      AuraDB.upsertProject(newSite);
+      // Project persistence is performed after real files are generated.
     } catch (e) {
       console.warn('[AuraDB] Project persist notice:', e);
     }
@@ -897,6 +999,27 @@ async function startServer() {
     try {
       fileResult = RealExecutor.createWebsiteProjectFiles(currentUser.id, newSite);
       qaVerification = RealExecutor.verifyWebsiteProject(fileResult.files);
+
+      // Persist the actual generated project files using AuraDB's ProjectRecord schema.
+      AuraDB.saveProject({
+        id: newSite.id,
+        userId: currentUser.id,
+        name: newSite.name,
+        businessType: newSite.category,
+        status: newSite.status,
+        files: fileResult.files.map((file) => ({
+          name: file.name,
+          path: file.path,
+          content: file.content,
+          language: file.name.includes(".")
+            ? file.name.split(".").pop() || "text"
+            : "text",
+          size: String(file.content.length)
+        })),
+        verification: qaVerification,
+        createdAt: newSite.createdAt,
+        updatedAt: newSite.updatedAt || newSite.createdAt
+      });
     } catch (e: any) {
       console.warn('[RealExecutor] Project files creation notice:', e.message);
     }

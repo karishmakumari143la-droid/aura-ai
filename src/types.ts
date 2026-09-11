@@ -20,46 +20,47 @@ export interface User {
   };
 }
 
-export type AIOrbState = 
-  | 'IDLE' 
-  | 'LISTENING' 
+export type AIOrbState =
+  | 'IDLE'
+  | 'LISTENING'
   | 'UNDERSTANDING'
-  | 'THINKING' 
-  | 'PLANNING' 
+  | 'THINKING'
+  | 'PLANNING'
   | 'SPEAKING'
   | 'WORKING'
-  | 'EXECUTING' 
-  | 'COMMUNICATING' 
+  | 'EXECUTING'
+  | 'COMMUNICATING'
   | 'LEARNING'
   | 'EMPATHY'
-  | 'VERIFYING' 
-  | 'SUCCESS' 
+  | 'VERIFYING'
+  | 'RECOVERING'
+  | 'SUCCESS'
   | 'ERROR'
   | 'WAITING';
 
 export type AuraState = AIOrbState;
 
-export type UserEmotion = 
-  | 'CALM' 
-  | 'HAPPY' 
-  | 'EXCITED' 
-  | 'CONFUSED' 
-  | 'STRESSED' 
-  | 'SAD' 
-  | 'FRUSTRATED' 
-  | 'URGENT' 
-  | 'FOCUSED' 
+export type UserEmotion =
+  | 'CALM'
+  | 'HAPPY'
+  | 'EXCITED'
+  | 'CONFUSED'
+  | 'STRESSED'
+  | 'SAD'
+  | 'FRUSTRATED'
+  | 'URGENT'
+  | 'FOCUSED'
   | 'NEUTRAL';
 
-export type TaskStatus = 
+export type TaskStatus =
   | 'QUEUED'
-  | 'PLANNING' 
-  | 'RUNNING' 
+  | 'PLANNING'
+  | 'RUNNING'
   | 'WAITING'
-  | 'WAITING_FOR_APPROVAL' 
-  | 'VERIFYING' 
-  | 'COMPLETED' 
-  | 'FAILED' 
+  | 'WAITING_FOR_APPROVAL'
+  | 'VERIFYING'
+  | 'COMPLETED'
+  | 'FAILED'
   | 'CANCELLED';
 
 export type StepStatus = 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'waiting_approval';
@@ -89,7 +90,7 @@ export interface Workstation {
   color: string;
 }
 
-export type ComputerPermissionType = 
+export type ComputerPermissionType =
   | 'FILES_READ'
   | 'FILES_WRITE'
   | 'FILES_DELETE'
@@ -148,15 +149,15 @@ export interface WebsiteProject {
   updatedAt?: string;
 }
 
-export type MemoryCategory = 
-  | 'USER_PREFERENCES' 
-  | 'BUSINESS_RULES' 
-  | 'BRAND_GUIDELINES' 
-  | 'PROJECTS' 
-  | 'CLIENTS' 
-  | 'TEMPLATES' 
-  | 'PRICING' 
-  | 'WORKFLOWS' 
+export type MemoryCategory =
+  | 'USER_PREFERENCES'
+  | 'BUSINESS_RULES'
+  | 'BRAND_GUIDELINES'
+  | 'PROJECTS'
+  | 'CLIENTS'
+  | 'TEMPLATES'
+  | 'PRICING'
+  | 'WORKFLOWS'
   | 'IMPORTANT_DECISIONS'
   | 'SUCCESSFUL_PATTERNS'
   | 'FAILED_PATTERNS'

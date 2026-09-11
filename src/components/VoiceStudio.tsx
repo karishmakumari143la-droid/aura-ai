@@ -253,7 +253,7 @@ export const VoiceStudio: React.FC = () => {
 
           <select
             value={language}
-            onChange={e => setLanguage(e.target.value as SpeechLanguage)}
+            onChange={e => setLanguage(e.target.value as SpeechLanguagePreference)}
             className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-cyan-500/40"
           >
             <option value="auto">Auto</option>
