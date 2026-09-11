@@ -33,6 +33,21 @@ db.exec(`
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
   );
 
+  CREATE TABLE IF NOT EXISTS google_identities (
+    google_sub TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL UNIQUE,
+    email TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_google_identities_user
+    ON google_identities(user_id);
+
+  CREATE INDEX IF NOT EXISTS idx_google_identities_email
+    ON google_identities(email);
+
   CREATE TABLE IF NOT EXISTS sessions (
     token TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,

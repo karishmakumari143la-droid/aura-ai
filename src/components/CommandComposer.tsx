@@ -159,7 +159,7 @@ export const CommandComposer: React.FC<CommandComposerProps> = ({
             {isExecuting && (
               <div className="flex items-center gap-1.5 text-xs text-amber-300 font-medium px-2 py-1 rounded-md bg-amber-950/40 border border-amber-800/60">
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
-                <span>Orchestrating...</span>
+                <span>Working...</span>
               </div>
             )}
 

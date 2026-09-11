@@ -438,7 +438,7 @@ export default function App() {
         size: file.size
       }));
 
-      const res = await fetch('/api/brain/turn', { credentials: 'include',
+      const res = await fetch('/api/brain/turn', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

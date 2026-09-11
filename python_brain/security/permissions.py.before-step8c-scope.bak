@@ -1,0 +1,314 @@
+"""
+AURA AI — Security Permissions Engine
+
+Central ALLOW / ASK / DENY enforcement.
+High-risk capabilities default to ASK.
+Explicit user confirmation can authorize one operation without
+changing the persistent permission policy.
+"""
+
+from enum import Enum
+from typing import Dict, Tuple, Optional
+import time
+import uuid
+import os
+import sqlite3
+
+
+class PermissionState(str, Enum):
+    ALLOW = "allow"
+    ASK = "ask"
+    DENY = "deny"
+
+
+class PermissionKey(str, Enum):
+    FILES_READ = "FILES_READ"
+    FILES_WRITE = "FILES_WRITE"
+    FILES_DELETE = "FILES_DELETE"
+    TERMINAL_EXECUTION = "TERMINAL_EXECUTION"
+    BROWSER_CONTROL = "BROWSER_CONTROL"
+    APP_LAUNCH = "APP_LAUNCH"
+    SCREEN_CAPTURE = "SCREEN_CAPTURE"
+    SCREEN_ANALYSIS = "SCREEN_ANALYSIS"
+    CLIPBOARD = "CLIPBOARD"
+    CLIPBOARD_READ = "CLIPBOARD_READ"
+    CLIPBOARD_WRITE = "CLIPBOARD_WRITE"
+    GIT_ACCESS = "GIT_ACCESS"
+
+
+# Conservative defaults.
+# Reading/writing inside AURA's own workspace is allowed.
+# Sensitive computer capabilities require explicit authorization.
+DEFAULT_PERMISSIONS: Dict[str, PermissionState] = {
+    PermissionKey.FILES_READ.value: PermissionState.ALLOW,
+    PermissionKey.FILES_WRITE.value: PermissionState.ALLOW,
+    PermissionKey.FILES_DELETE.value: PermissionState.ASK,
+    PermissionKey.TERMINAL_EXECUTION.value: PermissionState.ASK,
+    PermissionKey.BROWSER_CONTROL.value: PermissionState.ASK,
+    PermissionKey.APP_LAUNCH.value: PermissionState.ASK,
+    PermissionKey.SCREEN_CAPTURE.value: PermissionState.ASK,
+    PermissionKey.SCREEN_ANALYSIS.value: PermissionState.ASK,
+    PermissionKey.CLIPBOARD.value: PermissionState.ASK,
+    PermissionKey.CLIPBOARD_READ.value: PermissionState.ASK,
+    PermissionKey.CLIPBOARD_WRITE.value: PermissionState.ASK,
+    PermissionKey.GIT_ACCESS.value: PermissionState.ASK,
+}
+
+
+class PermissionManager:
+    def __init__(self, db_path: Optional[str] = None):
+        self.db_path = db_path or os.path.join(
+            os.getcwd(), "data", "aura_permissions.db"
+        )
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        self._init_db()
+        self._init_grants_table()
+
+    def _init_db(self):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS user_permissions (
+                    user_id TEXT NOT NULL,
+                    perm_key TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (user_id, perm_key)
+                )
+            """)
+            conn.commit()
+
+    def _init_grants_table(self):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS permission_grants (
+                    grant_id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    perm_key TEXT NOT NULL,
+                    scope_id TEXT,
+                    expires_at REAL,
+                    one_time INTEGER NOT NULL DEFAULT 1,
+                    consumed INTEGER NOT NULL DEFAULT 0,
+                    created_at REAL NOT NULL
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_permission_grants_user "
+                "ON permission_grants(user_id)"
+            )
+            conn.commit()
+
+    def create_grant(
+        self,
+        user_id: str,
+        perm_key: str,
+        scope_id: Optional[str] = None,
+        ttl_seconds: int = 300,
+        one_time: bool = True,
+    ) -> str:
+        if not user_id or not perm_key:
+            raise ValueError("user_id and perm_key are required.")
+
+        if perm_key not in DEFAULT_PERMISSIONS:
+            raise ValueError(f"Unknown permission: {perm_key}")
+
+        if ttl_seconds <= 0:
+            raise ValueError("ttl_seconds must be greater than zero.")
+
+        grant_id = uuid.uuid4().hex
+        now = time.time()
+        expires_at = now + ttl_seconds
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO permission_grants (
+                    grant_id, user_id, perm_key, scope_id,
+                    expires_at, one_time, consumed, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+                """,
+                (
+                    grant_id,
+                    user_id,
+                    perm_key,
+                    scope_id,
+                    expires_at,
+                    1 if one_time else 0,
+                    now,
+                ),
+            )
+            conn.commit()
+
+        return grant_id
+
+    def _init_grants(self):
+        self._init_grants_table()
+
+    def get_permissions(self, user_id: str = "default_user") -> Dict[str, str]:
+        perms = {k: v.value for k, v in DEFAULT_PERMISSIONS.items()}
+
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT perm_key, state FROM user_permissions WHERE user_id = ?",
+                    (user_id,),
+                )
+
+                for row in cursor.fetchall():
+                    # Ignore unknown/corrupt permission states instead of
+                    # accidentally granting access.
+                    if row[1] in (
+                        PermissionState.ALLOW.value,
+                        PermissionState.ASK.value,
+                        PermissionState.DENY.value,
+                    ):
+                        perms[row[0]] = row[1]
+        except Exception:
+            # Fail closed: defaults remain in effect.
+            pass
+
+        return perms
+
+    get_user_permissions = get_permissions
+
+    def set_permission(
+        self,
+        user_id: str,
+        perm_key: str,
+        state: str,
+    ) -> bool:
+        if state not in (
+            PermissionState.ALLOW.value,
+            PermissionState.ASK.value,
+            PermissionState.DENY.value,
+        ):
+            raise ValueError(
+                f"Invalid state: {state}. Must be allow, ask, or deny."
+            )
+
+        if not user_id or not perm_key:
+            raise ValueError("user_id and perm_key are required.")
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                INSERT INTO user_permissions (
+                    user_id, perm_key, state, updated_at
+                )
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(user_id, perm_key)
+                DO UPDATE SET
+                    state = excluded.state,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (user_id, perm_key, state))
+            conn.commit()
+
+        return True
+
+    def consume_grant(
+        self,
+        grant_id: str,
+        user_id: str,
+        perm_key: str,
+    ) -> bool:
+        if not grant_id or not user_id or not perm_key:
+            return False
+
+        now = time.time()
+
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                """
+                UPDATE permission_grants
+                SET consumed = 1
+                WHERE grant_id = ?
+                  AND user_id = ?
+                  AND perm_key = ?
+                  AND consumed = 0
+                  AND (expires_at IS NULL OR expires_at > ?)
+                """,
+                (grant_id, user_id, perm_key, now),
+            )
+            conn.commit()
+            return cursor.rowcount == 1
+
+    def check_permission(
+        self,
+        user_id: str,
+        perm_key: str,
+        interactive_confirm: bool = False,
+        grant_id: Optional[str] = None,
+    ) -> Tuple[bool, str, str]:
+
+        if not user_id:
+            return (
+                False,
+                "Permission denied: missing user identity.",
+                PermissionState.DENY.value,
+            )
+
+        if not perm_key:
+            return (
+                False,
+                "Permission denied: missing capability.",
+                PermissionState.DENY.value,
+            )
+
+        # A valid task/request-scoped grant may authorize this single operation.
+        if grant_id:
+            now = time.time()
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    """
+                    SELECT *
+                    FROM permission_grants
+                    WHERE grant_id = ?
+                      AND user_id = ?
+                      AND perm_key = ?
+                      AND consumed = 0
+                      AND (expires_at IS NULL OR expires_at > ?)
+                    """,
+                    (grant_id, user_id, perm_key, now),
+                ).fetchone()
+
+            if row:
+                return (
+                    True,
+                    "Operation granted by temporary task-scoped permission.",
+                    "grant",
+                )
+
+        perms = self.get_permissions(user_id)
+        current_state = perms.get(
+            perm_key,
+            PermissionState.ASK.value,
+        )
+
+        if current_state == PermissionState.DENY.value:
+            return (
+                False,
+                f"Permission {perm_key} is strictly DENIED by security policy.",
+                current_state,
+            )
+
+        if current_state == PermissionState.ALLOW.value:
+            return (
+                True,
+                "Operation granted by security policy.",
+                current_state,
+            )
+
+        # ASK means explicit confirmation is required for THIS operation.
+        if interactive_confirm:
+            return (
+                True,
+                f"Operation granted with one-time interactive confirmation ({perm_key}).",
+                current_state,
+            )
+
+        return (
+            False,
+            f"Action requires explicit user confirmation (state: ASK for {perm_key}).",
+            current_state,
+        )

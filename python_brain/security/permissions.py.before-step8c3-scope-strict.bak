@@ -324,10 +324,7 @@ class PermissionManager:
                         WHERE grant_id = ?
                           AND user_id = ?
                           AND perm_key = ?
-                          AND (
-                              (? IS NULL AND scope_id IS NULL)
-                              OR scope_id = ?
-                          )
+                          AND (scope_id = ? OR scope_id IS NULL)
                           AND consumed = 0
                           AND (expires_at IS NULL OR expires_at > ?)
                         """,
@@ -335,7 +332,6 @@ class PermissionManager:
                             grant_id,
                             user_id,
                             perm_key,
-                            scope_id,
                             scope_id,
                             now,
                         ),
@@ -388,10 +384,7 @@ class PermissionManager:
                     WHERE grant_id = ?
                       AND user_id = ?
                       AND perm_key = ?
-                      AND (
-                          (? IS NULL AND scope_id IS NULL)
-                          OR scope_id = ?
-                      )
+                      AND (scope_id = ? OR scope_id IS NULL)
                       AND consumed = 0
                       AND (expires_at IS NULL OR expires_at > ?)
                     """,
@@ -399,7 +392,6 @@ class PermissionManager:
                         grant_id,
                         user_id,
                         perm_key,
-                        scope_id,
                         scope_id,
                         now,
                     ),

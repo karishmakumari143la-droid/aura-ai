@@ -74,18 +74,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
   };
 
-  const handleProviderAction = async (endpoint: string) => {
+  const handleProviderAction = (endpoint: string) => {
     setIsLoading(true);
     setMessage(null);
-    try {
-      const res = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, phone: email }) });
-      const data = await res.json().catch(() => null);
-      setMessage(data?.message || data?.error || 'Authentication provider setup is required.');
-    } catch {
-      setMessage('Authentication gateway is unavailable.');
-    } finally {
-      setIsLoading(false);
-    }
+    window.location.assign(endpoint);
   };
 
   return (

@@ -11,7 +11,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from .brain import AuraBrain
-from .security.permissions import PermissionKey
 from .voice.service import VoiceService
 from .runtime.background import BackgroundTaskManager
 from .ws.events import event_dispatcher
@@ -41,14 +40,10 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = "default_session"
     interactive_confirm: Optional[bool] = False
     idempotency_key: Optional[str] = None
-    scope_id: Optional[str] = None
-    grant_id: Optional[str] = None
 
 class VoiceRequest(BaseModel):
     transcript: str
     user_id: Optional[str] = "default_user"
-    scope_id: Optional[str] = None
-    grant_id: Optional[str] = None
 
 class PermissionUpdateRequest(BaseModel):
     user_id: str
@@ -67,8 +62,6 @@ class ToolExecuteRequest(BaseModel):
     args: Dict[str, Any]
     user_id: Optional[str] = "default_user"
     confirmed: Optional[bool] = False
-    scope_id: Optional[str] = None
-    grant_id: Optional[str] = None
 
 class QARequest(BaseModel):
     file_path: str
@@ -77,8 +70,6 @@ class BackgroundTaskRequest(BaseModel):
     user_id: str
     title: str
     command: Optional[str] = None
-    scope_id: Optional[str] = None
-    grant_id: Optional[str] = None
 
 # ==================== ENDPOINTS ====================
 
@@ -97,9 +88,7 @@ async def chat_turn(req: ChatRequest):
         user_id=req.user_id or "default_user",
         session_id=req.session_id or "default_session",
         interactive_confirm=req.interactive_confirm or False,
-        idempotency_key=req.idempotency_key,
-        scope_id=req.scope_id,
-        grant_id=req.grant_id
+        idempotency_key=req.idempotency_key
     )
     # Broadcast event via WebSocket
     await event_dispatcher.broadcast("BRAIN_TURN_COMPLETED", {
@@ -120,9 +109,7 @@ def handle_voice(req: VoiceRequest):
     brain_res = brain.process_turn(
         prompt=voice_res["text"],
         user_id=req.user_id or "default_user",
-        interactive_confirm=False,
-        scope_id=req.scope_id,
-        grant_id=req.grant_id
+        interactive_confirm=False
     )
     tts_payload = voice_service.prepare_tts_payload(
         text=brain_res.get("response", ""),
@@ -167,158 +154,44 @@ def run_qa(req: QARequest):
 
 @app.post("/api/brain/execute")
 def execute_tool(req: ToolExecuteRequest):
-    user_id = req.user_id or "default_user"
-    scope_id = req.scope_id or f"direct-execute:{user_id}"
     perm_key = brain._map_tool_to_permission(req.tool)
-
-    allowed, msg, state = brain.permissions.check_permission(
-        user_id=user_id,
-        perm_key=perm_key.value,
-        interactive_confirm=req.confirmed or False,
-        grant_id=req.grant_id,
-        scope_id=scope_id
-    )
-
-    if allowed and state == "grant":
-        consumed = brain.permissions.consume_grant(
-            grant_id=req.grant_id or "",
-            user_id=user_id,
-            perm_key=perm_key.value,
-            scope_id=scope_id
-        )
-        if not consumed:
-            return {
-                "success": False,
-                "error": "Permission grant could not be consumed safely.",
-                "permission_state": "deny",
-                "status": "BLOCKED",
-                "scope_id": scope_id
-            }
-
+    allowed, msg, state = brain.permissions.check_permission(req.user_id or "default_user", perm_key.value, req.confirmed or False)
     if not allowed:
-        waiting = state == "ask"
-        return {
-            "success": False,
-            "error": msg,
-            "permission_state": state,
-            "requires_confirmation": waiting,
-            "status": "WAITING_FOR_APPROVAL" if waiting else "BLOCKED",
-            "scope_id": scope_id
-        }
+        return {"success": False, "error": msg, "permission_state": state, "requires_confirmation": (state == "ask")}
 
     if req.tool == "filesystem_read":
         return brain.fs.read_file(req.args.get("path", ""))
-
     elif req.tool == "filesystem_write":
-        return brain.fs.write_file(
-            req.args.get("path", ""),
-            req.args.get("content", "")
-        )
-
+        return brain.fs.write_file(req.args.get("path", ""), req.args.get("content", ""))
     elif req.tool == "terminal_execute":
-        return brain.terminal.execute_command(
-            req.args.get("command", ""),
-            cwd=req.args.get("cwd")
-        )
-
+        return brain.terminal.execute_command(req.args.get("command", ""), cwd=req.args.get("cwd"))
     elif req.tool == "code_runner":
-        return brain.code_runner.run_python_code(
-            req.args.get("code", "")
-        )
-
+        return brain.code_runner.run_python_code(req.args.get("code", ""))
     elif req.tool == "browser_inspect":
-        return brain.browser.navigate_and_inspect(
-            req.args.get("url", "")
-        )
-
+        return brain.browser.navigate_and_inspect(req.args.get("url", ""))
     elif req.tool == "git_action":
         act = req.args.get("action", "status")
-        if act == "status":
-            return brain.git.status()
-        if act == "branch":
-            return brain.git.branch()
+        if act == "status": return brain.git.status()
+        if act == "branch": return brain.git.branch()
         return brain.git.log()
-
     elif req.tool == "web_research":
-        return brain.research.search(
-            req.args.get("query", "")
-        )
-
+        return brain.research.search(req.args.get("query", ""))
     elif req.tool == "app_launch":
-        return brain.launcher.launch(
-            req.args.get("app_name", "")
-        )
-
+        return brain.launcher.launch(req.args.get("app_name", ""))
     elif req.tool == "screen_capture":
-        return brain.screen.capture_screen(
-            req.args.get("target", "")
-        )
-
-    return {
-        "success": False,
-        "error": f"Unsupported tool: {req.tool}"
-    }
+        return brain.screen.capture_screen(req.args.get("target", ""))
+    return {"success": False, "error": f"Unsupported tool: {req.tool}"}
 
 @app.post("/api/brain/background-task")
 def launch_background_task(req: BackgroundTaskRequest):
-    user_id = req.user_id or "default_user"
-    scope_id = req.scope_id or f"background:{user_id}:{req.title}"
-
-    if req.command:
-        allowed, msg, state = brain.permissions.check_permission(
-            user_id=user_id,
-            perm_key=PermissionKey.TERMINAL_EXECUTION.value,
-            interactive_confirm=False,
-            grant_id=req.grant_id,
-            scope_id=scope_id
-        )
-
-        if allowed and state == "grant":
-            consumed = brain.permissions.consume_grant(
-                grant_id=req.grant_id or "",
-                user_id=user_id,
-                perm_key=PermissionKey.TERMINAL_EXECUTION.value,
-                scope_id=scope_id
-            )
-            if not consumed:
-                return {
-                    "success": False,
-                    "error": "Permission grant could not be consumed safely.",
-                    "permission_state": "deny",
-                    "status": "BLOCKED",
-                    "scope_id": scope_id
-                }
-
-        if not allowed:
-            waiting = state == "ask"
-            return {
-                "success": False,
-                "error": msg,
-                "permission_state": state,
-                "requires_confirmation": waiting,
-                "status": "WAITING_FOR_APPROVAL" if waiting else "BLOCKED",
-                "scope_id": scope_id
-            }
-
     def worker(task_id: str):
         if req.command:
-            return brain.terminal.execute_command(req.command)
-        return {
-            "message": f"Background task '{req.title}' finished."
-        }
+            res = brain.terminal.execute_command(req.command)
+            return res
+        return {"message": f"Background task '{req.title}' finished."}
 
-    task_id = task_manager.launch_in_background(
-        user_id,
-        req.title,
-        worker
-    )
-
-    return {
-        "success": True,
-        "task_id": task_id,
-        "status": "QUEUED",
-        "scope_id": scope_id
-    }
+    task_id = task_manager.launch_in_background(req.user_id, req.title, worker)
+    return {"success": True, "task_id": task_id, "status": "QUEUED"}
 
 @app.get("/api/brain/background-task/{task_id}")
 def get_background_task(task_id: str):

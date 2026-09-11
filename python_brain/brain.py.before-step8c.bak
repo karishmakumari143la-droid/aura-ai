@@ -12,7 +12,7 @@ from typing import Dict, Any, List, Optional
 from .intent import IntentAnalyzer, IntentType
 from .aura_reasoning import AuraReasoning
 from .memory import PersistentMemory
-from .security.permissions import PermissionManager, PermissionKey, PermissionState
+from .security.permissions import PermissionManager, PermissionKey
 from .security.audit import AuditLogger
 from .tools.filesystem import FilesystemTool
 from .tools.terminal import TerminalTool
@@ -91,9 +91,7 @@ class AuraBrain:
         user_id: str = "default_user",
         session_id: str = "default_session",
         interactive_confirm: bool = False,
-        idempotency_key: Optional[str] = None,
-        scope_id: Optional[str] = None,
-        grant_id: Optional[str] = None
+        idempotency_key: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Main cognitive processing turn:
@@ -302,64 +300,27 @@ class AuraBrain:
             step_result: Dict[str, Any] = {"success": False}
             permission_key = self._map_tool_to_permission(tool_name)
 
-            # Check Permission Matrix.
-            # A request scope binds temporary approval to this execution context.
-            effective_scope_id = scope_id or req_key
-
+            # Check Permission Matrix
             allowed, perm_msg, perm_state = self.permissions.check_permission(
                 user_id=user_id,
                 perm_key=permission_key.value,
-                interactive_confirm=interactive_confirm,
-                grant_id=grant_id,
-                scope_id=effective_scope_id
+                interactive_confirm=interactive_confirm
             )
 
-            # Temporary grants are one-operation credentials.
-            # Consume atomically immediately before execution.
-            if allowed and perm_state == "grant":
-                consumed = self.permissions.consume_grant(
-                    grant_id=grant_id or "",
-                    user_id=user_id,
-                    perm_key=permission_key.value,
-                    scope_id=effective_scope_id
-                )
-
-                if not consumed:
-                    allowed = False
-                    perm_state = PermissionState.DENY.value
-                    perm_msg = "Permission grant could not be consumed safely."
-
             if not allowed:
-                waiting_for_approval = (
-                    perm_state == PermissionState.ASK.value
-                )
-
                 step_result = {
                     "success": False,
                     "error": perm_msg,
                     "permission_state": perm_state,
-                    "requires_confirmation": waiting_for_approval,
-                    "status": (
-                        "WAITING_FOR_APPROVAL"
-                        if waiting_for_approval
-                        else "BLOCKED"
-                    ),
-                    "scope_id": effective_scope_id
+                    "requires_confirmation": (perm_state == "ask")
                 }
                 overall_success = False
-                fatal_error = perm_msg
-
                 self.audit.log_action(
                     user_id=user_id, action_type="TOOL_EXECUTE", tool_name=tool_name,
-                    parameters={
-                        **args,
-                        "_execution_scope_id": effective_scope_id
-                    },
-                    permission_state=perm_state, confirmed=interactive_confirm,
+                    parameters=args, permission_state=perm_state, confirmed=interactive_confirm,
                     success=False, duration_ms=int((time.time() - step_start) * 1000),
                     error_message=perm_msg
                 )
-
                 executed_steps.append({
                     "step_id": step.get("step_id"),
                     "tool": tool_name,

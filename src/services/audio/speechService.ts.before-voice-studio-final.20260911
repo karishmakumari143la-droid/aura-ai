@@ -1,8 +1,7 @@
 import { voiceAnalyzer } from './voiceAnalyzer';
 
 export type SpeechLanguage = 'en' | 'hi' | 'hinglish';
-export type SpeechLanguagePreference = 'auto' | SpeechLanguage;
-export type VoiceStyle = 'natural' | 'professional' | 'friendly';
+
 export type VoiceGender = 'female' | 'male' | 'neutral';
 
 export interface VoiceProfile {
@@ -29,14 +28,6 @@ export interface SpeechRecognitionHandlers {
   onResult: (transcript: string, isFinal: boolean) => void;
   onError?: (error: string) => void;
   onEnd?: () => void;
-}
-
-export interface VoicePreferences {
-  selectedProfileId: string;
-  language: SpeechLanguagePreference;
-  style: VoiceStyle;
-  rate: number;
-  pitch: number;
 }
 
 const STORAGE_KEY = 'aura.voice.preferences';
@@ -77,24 +68,6 @@ const DEFAULT_PROFILES: VoiceProfile[] = [
     languages: ['hi', 'en', 'hinglish'],
     rate: 0.98,
     pitch: 0.94
-  },
-  {
-    id: 'kabir',
-    name: 'Kabir',
-    gender: 'male',
-    description: 'Indian Male · Deep & Calm',
-    languages: ['hi', 'en', 'hinglish'],
-    rate: 0.94,
-    pitch: 0.84
-  },
-  {
-    id: 'aadhya',
-    name: 'Aadhya',
-    gender: 'female',
-    description: 'Indian Female · Soft & Friendly',
-    languages: ['hi', 'en', 'hinglish'],
-    rate: 1.04,
-    pitch: 1.12
   }
 ];
 
@@ -103,11 +76,7 @@ class SpeechService {
   private isListening = false;
   private isSpeaking = false;
   private voices: SpeechSynthesisVoice[] = [];
-
   private selectedProfileId = 'anaya';
-  private languagePreference: SpeechLanguagePreference = 'auto';
-  private voiceStyle: VoiceStyle = 'natural';
-
   private speakingRate = 1.02;
   private speakingPitch = 1.08;
 
@@ -141,15 +110,11 @@ class SpeechService {
   }
 
   public getVoiceProfiles(): VoiceProfile[] {
-    return DEFAULT_PROFILES.map(profile => {
-      const voice = this.findVoiceForProfile(profile);
-
-      return {
-        ...profile,
-        voiceName: voice?.name,
-        voiceLang: voice?.lang
-      };
-    });
+    return DEFAULT_PROFILES.map(profile => ({
+      ...profile,
+      voiceName: this.findVoiceForProfile(profile)?.name,
+      voiceLang: this.findVoiceForProfile(profile)?.lang
+    }));
   }
 
   public getAvailableVoices(): AvailableVoice[] {
@@ -166,38 +131,15 @@ class SpeechService {
     return this.selectedProfileId;
   }
 
-  public getLanguagePreference(): SpeechLanguagePreference {
-    return this.languagePreference;
-  }
-
-  public getVoiceStyle(): VoiceStyle {
-    return this.voiceStyle;
-  }
-
-  public getVoiceSettings(): {
-    rate: number;
-    pitch: number;
-  } {
+  public getVoiceSettings(): { rate: number; pitch: number } {
     return {
-      rate: this.speakingRate,
-      pitch: this.speakingPitch
-    };
-  }
-
-  public getVoicePreferences(): VoicePreferences {
-    return {
-      selectedProfileId: this.selectedProfileId,
-      language: this.languagePreference,
-      style: this.voiceStyle,
       rate: this.speakingRate,
       pitch: this.speakingPitch
     };
   }
 
   public selectVoiceProfile(profileId: string): boolean {
-    const profile = DEFAULT_PROFILES.find(
-      p => p.id === profileId
-    );
+    const profile = DEFAULT_PROFILES.find(p => p.id === profileId);
 
     if (!profile) {
       return false;
@@ -206,39 +148,14 @@ class SpeechService {
     this.selectedProfileId = profile.id;
     this.speakingRate = profile.rate;
     this.speakingPitch = profile.pitch;
-    this.applyStyleAdjustment();
     this.savePreferences();
 
     return true;
   }
 
-  public setLanguagePreference(
-    language: SpeechLanguagePreference
-  ): void {
-    this.languagePreference = language;
-    this.savePreferences();
-  }
-
-  public setVoiceStyle(style: VoiceStyle): void {
-    this.voiceStyle = style;
-    this.applyStyleAdjustment();
-    this.savePreferences();
-  }
-
-  public setVoiceSettings(
-    rate: number,
-    pitch: number
-  ): void {
-    this.speakingRate = Math.max(
-      0.6,
-      Math.min(1.4, rate)
-    );
-
-    this.speakingPitch = Math.max(
-      0.5,
-      Math.min(1.5, pitch)
-    );
-
+  public setVoiceSettings(rate: number, pitch: number): void {
+    this.speakingRate = Math.max(0.6, Math.min(1.4, rate));
+    this.speakingPitch = Math.max(0.5, Math.min(1.5, pitch));
     this.savePreferences();
   }
 
@@ -262,9 +179,7 @@ class SpeechService {
     );
   }
 
-  public setRecognitionLanguage(
-    language: SpeechLanguage
-  ): void {
+  public setRecognitionLanguage(language: SpeechLanguage): void {
     if (!this.recognition) return;
 
     this.recognition.lang =
@@ -406,12 +321,6 @@ class SpeechService {
         p => p.id === this.selectedProfileId
       ) || DEFAULT_PROFILES[0];
 
-    const resolvedLanguage =
-      this.resolveSpeechLanguage(
-        plainText,
-        lang
-      );
-
     const utterance = new SpeechSynthesisUtterance(
       plainText.slice(0, 300)
     );
@@ -419,19 +328,22 @@ class SpeechService {
     utterance.rate = this.speakingRate;
     utterance.pitch = this.speakingPitch;
 
-    if (resolvedLanguage === 'hi') {
+    const isHindi =
+      lang === 'hi' ||
+      /[\u0900-\u097F]/.test(plainText);
+
+    const isHinglish = lang === 'hinglish';
+
+    if (isHindi) {
       utterance.lang = 'hi-IN';
-    } else if (resolvedLanguage === 'hinglish') {
+    } else if (isHinglish) {
       utterance.lang = 'en-IN';
     } else {
       utterance.lang = 'en-US';
     }
 
     const matchingVoice =
-      this.findVoiceForProfile(
-        profile,
-        utterance.lang
-      );
+      this.findVoiceForProfile(profile, utterance.lang);
 
     if (matchingVoice) {
       utterance.voice = matchingVoice;
@@ -462,80 +374,33 @@ class SpeechService {
 
   public previewVoice(
     profileId: string,
-    language: SpeechLanguagePreference = 'hinglish'
+    language: SpeechLanguage = 'hinglish'
   ): boolean {
-    const profile =
-      DEFAULT_PROFILES.find(
-        p => p.id === profileId
-      );
+    const previousProfile = this.selectedProfileId;
 
-    if (!profile || !this.isSynthesisSupported()) {
+    if (!this.selectVoiceProfile(profileId)) {
       return false;
     }
 
-    this.stopSpeaking();
-    window.speechSynthesis.cancel();
+    const profile =
+      DEFAULT_PROFILES.find(p => p.id === profileId);
 
     const previewText =
       language === 'hi'
-        ? `नमस्ते, मैं ${profile.name} हूँ।`
+        ? `नमस्ते, मैं ${profile?.name || 'AURA'} हूँ।`
         : language === 'en'
-          ? `Hello, I am ${profile.name}.`
-          : `Hi, main ${profile.name} hoon.`;
+          ? `Hello, I am ${profile?.name || 'AURA'}.`
+          : `Hi, main ${profile?.name || 'AURA'} hoon.`;
 
-    const resolvedLanguage =
-      language === 'auto'
-        ? 'hinglish'
-        : language;
+    const result = this.speak(previewText, undefined, () => {
+      this.selectVoiceProfile(previousProfile);
+    }, language);
 
-    const utterance =
-      new SpeechSynthesisUtterance(previewText);
-
-    utterance.lang =
-      resolvedLanguage === 'hi'
-        ? 'hi-IN'
-        : resolvedLanguage === 'hinglish'
-          ? 'en-IN'
-          : 'en-US';
-
-    utterance.rate =
-      this.styleAdjustedRate(profile.rate);
-
-    utterance.pitch =
-      this.styleAdjustedPitch(profile.pitch);
-
-    const matchingVoice =
-      this.findVoiceForProfile(
-        profile,
-        utterance.lang
-      );
-
-    if (matchingVoice) {
-      utterance.voice = matchingVoice;
+    if (!result) {
+      this.selectVoiceProfile(previousProfile);
     }
 
-    utterance.onstart = () => {
-      this.isSpeaking = true;
-      voiceAnalyzer.startSpeechModulation();
-    };
-
-    utterance.onend = () => {
-      this.isSpeaking = false;
-      voiceAnalyzer.stopSpeechModulation();
-    };
-
-    utterance.onerror = () => {
-      this.isSpeaking = false;
-      voiceAnalyzer.stopSpeechModulation();
-    };
-
-    window.speechSynthesis.speak(utterance);
-
-    return true;
-  }
-
-  public isCurrentlySpeaking(): boolean {
-    return this.isSpeaking;
+    return result;
   }
 
   public stopSpeaking(): void {
@@ -571,47 +436,11 @@ class SpeechService {
     }
   }
 
-  private resolveSpeechLanguage(
-    text: string,
-    requestedLanguage?: string
-  ): SpeechLanguage {
-    if (
-      requestedLanguage === 'en' ||
-      requestedLanguage === 'hi' ||
-      requestedLanguage === 'hinglish'
-    ) {
-      return requestedLanguage;
-    }
-
-    if (
-      this.languagePreference !== 'auto'
-    ) {
-      return this.languagePreference;
-    }
-
-    if (/[\u0900-\u097F]/.test(text)) {
-      return 'hi';
-    }
-
-    const hindiWords =
-      /\b(hai|hain|hoon|hu|ka|ki|ke|kya|kyun|kyunki|mera|meri|mere|aap|tum|mujhe|mujhse|karna|kar|karo|batao|chahiye|nahi|nahin|acha|achha|theek|abhi|kal|aaj)\b/i;
-
-    if (hindiWords.test(text)) {
-      return 'hinglish';
-    }
-
-    return 'en';
-  }
-
   private findVoiceForProfile(
     profile: VoiceProfile,
     targetLang?: string
   ): SpeechSynthesisVoice | undefined {
     const voices = this.voices;
-
-    if (!voices.length) {
-      return undefined;
-    }
 
     const india = voices.filter(v =>
       /(^|[-_])(IN|India)([-_]|$)/i.test(v.lang) ||
@@ -633,12 +462,9 @@ class SpeechService {
               v.lang.toLowerCase().startsWith('en')
             );
 
-    const genderPool =
-      languagePool.filter(
-        v =>
-          this.inferGender(v) ===
-          profile.gender
-      );
+    const genderPool = languagePool.filter(
+      v => this.inferGender(v) === profile.gender
+    );
 
     return (
       genderPool[0] ||
@@ -657,7 +483,7 @@ class SpeechService {
     const name = voice.name.toLowerCase();
 
     if (
-      /female|woman|girl|samantha|victoria|zira|karen|susan|hazel|veena|heera|priya|neerja|aditi/.test(
+      /female|woman|girl|samantha|victoria|zira|karen|susan|hazel|veena|heera/.test(
         name
       )
     ) {
@@ -665,7 +491,7 @@ class SpeechService {
     }
 
     if (
-      /male|man|boy|aarav|rishi|david|daniel|alex|ravi|hemant|madhur/.test(
+      /male|man|boy|aarav|rishi|david|daniel|alex|ravi/.test(
         name
       )
     ) {
@@ -675,69 +501,11 @@ class SpeechService {
     return 'neutral';
   }
 
-  private styleAdjustedRate(
-    baseRate: number
-  ): number {
-    if (this.voiceStyle === 'professional') {
-      return Math.max(
-        0.6,
-        Math.min(1.4, baseRate * 0.96)
-      );
-    }
-
-    if (this.voiceStyle === 'friendly') {
-      return Math.max(
-        0.6,
-        Math.min(1.4, baseRate * 1.03)
-      );
-    }
-
-    return baseRate;
-  }
-
-  private styleAdjustedPitch(
-    basePitch: number
-  ): number {
-    if (this.voiceStyle === 'professional') {
-      return Math.max(
-        0.5,
-        Math.min(1.5, basePitch * 0.98)
-      );
-    }
-
-    if (this.voiceStyle === 'friendly') {
-      return Math.max(
-        0.5,
-        Math.min(1.5, basePitch * 1.02)
-      );
-    }
-
-    return basePitch;
-  }
-
-  private applyStyleAdjustment(): void {
-    const profile =
-      DEFAULT_PROFILES.find(
-        p => p.id === this.selectedProfileId
-      );
-
-    if (!profile) return;
-
-    this.speakingRate =
-      this.styleAdjustedRate(profile.rate);
-
-    this.speakingPitch =
-      this.styleAdjustedPitch(profile.pitch);
-  }
-
   private loadPreferences(): void {
-    if (typeof window === 'undefined') {
-      return;
-    }
+    if (typeof window === 'undefined') return;
 
     try {
-      const raw =
-        localStorage.getItem(STORAGE_KEY);
+      const raw = localStorage.getItem(STORAGE_KEY);
 
       if (!raw) return;
 
@@ -749,42 +517,15 @@ class SpeechService {
           p => p.id === data.selectedProfileId
         )
       ) {
-        this.selectedProfileId =
-          data.selectedProfileId;
-      }
-
-      if (
-        data.language === 'auto' ||
-        data.language === 'en' ||
-        data.language === 'hi' ||
-        data.language === 'hinglish'
-      ) {
-        this.languagePreference =
-          data.language;
-      }
-
-      if (
-        data.style === 'natural' ||
-        data.style === 'professional' ||
-        data.style === 'friendly'
-      ) {
-        this.voiceStyle = data.style;
+        this.selectedProfileId = data.selectedProfileId;
       }
 
       if (typeof data.rate === 'number') {
-        this.speakingRate =
-          Math.max(
-            0.6,
-            Math.min(1.4, data.rate)
-          );
+        this.speakingRate = data.rate;
       }
 
       if (typeof data.pitch === 'number') {
-        this.speakingPitch =
-          Math.max(
-            0.5,
-            Math.min(1.5, data.pitch)
-          );
+        this.speakingPitch = data.pitch;
       }
     } catch {
       // Ignore malformed local preferences.
@@ -792,24 +533,15 @@ class SpeechService {
   }
 
   private savePreferences(): void {
-    if (typeof window === 'undefined') {
-      return;
-    }
+    if (typeof window === 'undefined') return;
 
     try {
       localStorage.setItem(
         STORAGE_KEY,
         JSON.stringify({
-          selectedProfileId:
-            this.selectedProfileId,
-          language:
-            this.languagePreference,
-          style:
-            this.voiceStyle,
-          rate:
-            this.speakingRate,
-          pitch:
-            this.speakingPitch
+          selectedProfileId: this.selectedProfileId,
+          rate: this.speakingRate,
+          pitch: this.speakingPitch
         })
       );
     } catch {
@@ -818,5 +550,4 @@ class SpeechService {
   }
 }
 
-export const speechService =
-  new SpeechService();
+export const speechService = new SpeechService();

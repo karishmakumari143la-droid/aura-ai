@@ -259,105 +259,51 @@ export default function App() {
   };
 
   const startVoiceSession = async () => {
-    if (
-      voiceStartInFlightRef.current ||
-      isListening ||
-      !voiceSessionEnabledRef.current ||
-      commandInFlightRef.current ||
-      speechService.isCurrentlySpeaking()
-    ) {
-      return;
-    }
-
+    if (voiceStartInFlightRef.current || isListening) return;
     voiceStartInFlightRef.current = true;
     setOrbState('LISTENING');
     setIsListening(true);
-
     const started = await speechService.startListening({
-      onResult: (transcript, isFinal) => {
-        if (!isFinal) return;
-
-        setIsListening(false);
-
-        if (transcript.trim()) {
-          void handleExecuteCommand(transcript.trim());
-        }
-      },
-
-      onError: (error) => {
-        console.warn('Voice recognition error:', error);
-
-        setIsListening(false);
-
-        /*
-         * Recognition errors such as no-speech are recoverable.
-         * Only disable the persistent voice session when the browser
-         * explicitly reports that speech recognition is unavailable.
-         */
-        const message = String(error || '').toLowerCase();
-
-        if (
-          message.includes('not-allowed') ||
-          message.includes('service-not-allowed') ||
-          message.includes('not supported')
-        ) {
-          voiceSessionEnabledRef.current = false;
+        onResult: (transcript, isFinal) => {
+          if (isFinal) {
+            setIsListening(false);
+            if (transcript.trim()) {
+              handleExecuteCommand(transcript.trim());
+            } else {
+              setOrbState('IDLE');
+            }
+          }
+        },
+        onError: (error) => {
+          console.warn('Voice error:', error);
+          setIsListening(false);
           setIsVoiceActive(false);
           setOrbState('ERROR');
-          return;
+        },
+        onEnd: () => {
+          setIsListening(false);
         }
-
-        setOrbState('IDLE');
-      },
-
-      onEnd: () => {
-        setIsListening(false);
-
-        /*
-         * SpeechRecognition naturally ends after silence in many
-         * browsers. Keep the AURA voice session alive and restart
-         * recognition when it is safe.
-         */
-        if (
-          voiceSessionEnabledRef.current &&
-          !commandInFlightRef.current &&
-          !speechService.isCurrentlySpeaking()
-        ) {
-          window.setTimeout(() => {
-            void startVoiceSession();
-          }, 250);
-        } else if (!commandInFlightRef.current) {
-          setOrbState('IDLE');
-        }
-      }
     });
-
     voiceStartInFlightRef.current = false;
-
-    if (started) {
-      setIsVoiceActive(true);
-      return;
+    setIsVoiceActive(started);
+    if (!started) {
+      voiceSessionEnabledRef.current = false;
+      setIsListening(false);
+      setOrbState('ERROR');
     }
-
-    setIsListening(false);
-    setIsVoiceActive(false);
-    setOrbState('ERROR');
   };
 
-  /*
-   * Voice is persistent after the user has enabled it once.
-   * The navbar is now a status/navigation control, not an ON/OFF
-   * microphone switch.
-   */
+  // Voice Interaction Handler
   const handleToggleVoice = async () => {
-    voiceSessionEnabledRef.current = true;
-
-    if (
-      !isListening &&
-      !voiceStartInFlightRef.current &&
-      !commandInFlightRef.current &&
-      !speechService.isCurrentlySpeaking()
-    ) {
+    if (isListening || voiceSessionEnabledRef.current) {
+      voiceSessionEnabledRef.current = false;
+      speechService.stopListening();
+      speechService.stopSpeaking();
+      setIsListening(false);
+      setIsVoiceActive(false);
+      setOrbState('IDLE');
+    } else {
+      voiceSessionEnabledRef.current = true;
       await startVoiceSession();
     }
   };
@@ -438,7 +384,7 @@ export default function App() {
         size: file.size
       }));
 
-      const res = await fetch('/api/brain/turn', { credentials: 'include',
+      const res = await fetch('/api/brain/turn', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
