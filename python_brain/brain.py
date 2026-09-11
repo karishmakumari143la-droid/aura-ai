@@ -10,7 +10,7 @@ import json
 from typing import Dict, Any, List, Optional
 
 from .intent import IntentAnalyzer, IntentType
-from .reasoning import LLMReasoning
+from .aura_reasoning import AuraReasoning
 from .memory import PersistentMemory
 from .security.permissions import PermissionManager, PermissionKey
 from .security.audit import AuditLogger
@@ -39,7 +39,7 @@ class AuraBrain:
         self.data_dir = data_dir or os.path.join(base_dir, "data")
         os.makedirs(self.data_dir, exist_ok=True)
 
-        self.reasoning = LLMReasoning()
+        self.reasoning = AuraReasoning()
         self.memory = PersistentMemory(db_path=os.path.join(self.data_dir, "aura_memory.db"))
         self.permissions = PermissionManager(db_path=os.path.join(self.data_dir, "aura_permissions.db"))
         self.audit = AuditLogger(db_path=os.path.join(self.data_dir, "aura_audit.db"))
@@ -56,14 +56,13 @@ class AuraBrain:
         self.screen = ScreenVisionTool()
 
     def get_system_status(self) -> Dict[str, Any]:
-        is_gemini = self.reasoning.is_gemini_active()
-        mode = "GEMINI" if is_gemini else "HEURISTIC_FALLBACK"
+        diagnostics = self.reasoning.get_diagnostics()
         return {
             "status": "online",
             "brain_engine": "Python Central AURA Brain v3.0",
-            "reasoning_mode": mode,
-            "is_gemini_active": is_gemini,
-            "diagnostics": self.reasoning.get_diagnostics(),
+            "reasoning_mode": "AURA_LOCAL_REASONING",
+            "external_ai_provider": False,
+            "diagnostics": diagnostics,
             "workspace_root": self.workspace_root,
             "capabilities": {
                 "filesystem": "WORKING",
@@ -73,7 +72,7 @@ class AuraBrain:
                 "git_version_control": "WORKING",
                 "web_research": "WORKING",
                 "screen_capture_vision": self.screen.get_status(),
-                "desktop_companion": "WORKING",
+                "desktop_companion": "NOT_CONFIGURED",
                 "app_launcher": "WORKING",
                 "qa_audit_engine": "WORKING",
                 "automated_healing": "WORKING",
@@ -197,7 +196,7 @@ class AuraBrain:
                     clean_prompt = f"Create {spec.get('name', 'IronCore')} Gym website with {spec.get('theme', 'Premium dark design')} and {spec.get('features', 'WhatsApp booking')}"
                     # Fall through to execute ACTION_REQUEST for this single task!
 
-        # 2. REAL COGNITIVE REASONING (Gemini LLM when active, with heuristic fallback)
+        # 2. LOCAL COGNITIVE REASONING
         cognitive = self.reasoning.reason(clean_prompt, conversation_context=recent_context)
         raw_intent = cognitive.get("intent", "CONVERSATION")
         intent = raw_intent.value if hasattr(raw_intent, "value") else str(raw_intent)
@@ -285,7 +284,7 @@ class AuraBrain:
             "git_action", "web_research", "qa_verify_site"
         ]
         context = {"workspace": self.workspace_root, "language": language}
-        plan_steps = self.reasoning.plan_execution_steps(clean_prompt, available_tools, context)
+        plan_steps = self.reasoning.plan_execution_steps(clean_prompt)
 
         executed_steps = []
         overall_success = True
@@ -336,11 +335,74 @@ class AuraBrain:
                     path = args.get("path", "active_project/index.html")
                     # If template is requested or website creation
                     if args.get("template") == "landing_page":
-                        from .agents.multi_agent import PixelAgent
                         title = args.get("title", "AURA Project")
-                        content = PixelAgent.design_html(title=title, description=f"Real responsive web application for {title}")
+                        description = args.get(
+                            "description",
+                            f"Real responsive web application for {title}"
+                        )
+                        content = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{title}</title>
+  <meta name="description" content="{description}">
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0b0b0f;
+      color: #ffffff;
+    }}
+    main {{
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 40px 20px;
+    }}
+    .container {{
+      width: min(1100px, 100%);
+      text-align: center;
+    }}
+    h1 {{
+      font-size: clamp(2.5rem, 7vw, 5.5rem);
+      margin: 0 0 20px;
+      line-height: 1;
+    }}
+    p {{
+      max-width: 700px;
+      margin: 0 auto 30px;
+      color: #c9c9d1;
+      font-size: 1.1rem;
+      line-height: 1.7;
+    }}
+    a {{
+      display: inline-block;
+      padding: 14px 24px;
+      border-radius: 999px;
+      background: #ffffff;
+      color: #0b0b0f;
+      text-decoration: none;
+      font-weight: 700;
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <section class="container">
+      <h1>{title}</h1>
+      <p>{description}</p>
+      <a href="#contact">Get Started</a>
+    </section>
+  </main>
+</body>
+</html>"""
                     else:
-                        content = args.get("content", "<!DOCTYPE html><html><head><title>AURA</title></head><body><h1>AURA</h1></body></html>")
+                        content = args.get(
+                            "content",
+                            "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1.0'><title>AURA</title></head><body><main><h1>AURA</h1><a href='#contact'>Get Started</a></main></body></html>"
+                        )
 
                     step_result = self.fs.write_file(path, content)
                     if step_result["success"]:
@@ -391,8 +453,8 @@ class AuraBrain:
                         target_path = files_created[0]
                     if not os.path.isabs(target_path):
                         target_path = os.path.join(self.workspace_root, target_path)
-                    from .agents.multi_agent import QAAgent
-                    step_result = QAAgent.inspect_and_heal(target_path)
+                    step_result = QAEngine.audit_website_file(target_path)
+                    step_result["success"] = bool(step_result.get("passed", False))
 
                 elif tool_name in ("browser_control", "browser_inspect", "browser_e2e"):
                     target = args.get("url") or args.get("target", "")
@@ -471,16 +533,39 @@ class AuraBrain:
         total_duration = int((time.time() - start_time) * 1000)
         summary_lines = []
 
+        qa_step = next(
+            (s for s in executed_steps if s.get("tool") == "qa_verify_site"),
+            None
+        )
+        qa_audit = qa_step.get("result") if qa_step else None
+        qa_passed = bool(qa_audit and qa_audit.get("passed") is True)
+
         if overall_success:
-            if files_created:
+            if qa_step and not qa_passed:
+                overall_success = False
+                fatal_error = (
+                    qa_audit.get("error")
+                    or ", ".join(qa_audit.get("defects", []))
+                    or "Website QA verification failed."
+                )
+                summary_lines.append("Execution completed, but verification failed.")
+                summary_lines.append(f"Cause: {fatal_error}")
+            elif files_created:
                 summary_lines.append(f"Successfully executed plan for: '{clean_prompt}'.")
-                summary_lines.append(f"Created and verified files on disk: {', '.join(files_created)}.")
-                summary_lines.append("Automated QA audit passed with mobile responsiveness, semantic HTML5, and Tailwind styling.")
+                summary_lines.append(
+                    f"Created and verified files on disk: {', '.join(files_created)}."
+                )
+                if qa_passed:
+                    summary_lines.append(
+                        f"Website QA passed with score {qa_audit.get('score', 0)}/100."
+                    )
             else:
                 summary_lines.append(f"Successfully completed action: '{clean_prompt}'.")
-                summary_lines.append(f"Executed {len(executed_steps)} verified tool steps in {total_duration}ms.")
+                summary_lines.append(
+                    f"Executed {len(executed_steps)} verified tool steps in {total_duration}ms."
+                )
         else:
-            summary_lines.append(f"Execution could not be fully completed.")
+            summary_lines.append("Execution could not be fully completed.")
             if fatal_error:
                 summary_lines.append(f"Cause: {fatal_error}")
 
@@ -489,9 +574,6 @@ class AuraBrain:
 
         tools_list = reasoning_tools if reasoning_tools else list(dict.fromkeys(s.get("tool", "") for s in plan_steps if s.get("tool")))
         plan_list = reasoning_plan if reasoning_plan else [s.get("description", "") for s in plan_steps]
-
-        qa_step = next((s for s in executed_steps if s.get("tool") == "qa_verify_site"), None)
-        qa_audit = qa_step["result"] if qa_step else None
 
         res = {
             "success": overall_success,

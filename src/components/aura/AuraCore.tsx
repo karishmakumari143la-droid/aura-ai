@@ -91,8 +91,8 @@ export const AuraCore: React.FC<AuraCoreProps> = ({
       iconColor: 'text-purple-300'
     },
     PLANNING: {
-      title: 'Decomposing Parallel DAG',
-      desc: 'Structuring multi-agent workflow into dependency levels',
+      title: 'Planning the Next Action',
+      desc: 'Turning your request into a clear execution plan',
       glow: 'from-cyan-400/50 via-blue-600/35 to-transparent',
       outerRingColor: 'border-cyan-400/70',
       icon: Cpu,
@@ -107,24 +107,24 @@ export const AuraCore: React.FC<AuraCoreProps> = ({
       iconColor: 'text-cyan-200'
     },
     WORKING: {
-      title: 'Executing Multi-Agent Work',
-      desc: 'Specialist agents actively coding, designing & verifying',
+      title: 'Working on Your Request',
+      desc: 'AURA is creating, changing, and verifying the requested result',
       glow: 'from-blue-500/45 via-cyan-500/35 to-transparent',
       outerRingColor: 'border-cyan-300/80',
       icon: Cpu,
       iconColor: 'text-cyan-200'
     },
     EXECUTING: {
-      title: 'Executing Autonomous Work',
-      desc: 'Active parallel execution across workstations',
+      title: 'Executing the Planned Action',
+      desc: 'AURA is actively carrying out the requested work',
       glow: 'from-blue-500/50 via-cyan-500/40 to-transparent',
       outerRingColor: 'border-cyan-300/80',
       icon: Cpu,
       iconColor: 'text-cyan-200'
     },
     COMMUNICATING: {
-      title: 'Agent Bus Routing',
-      desc: 'Streaming telemetry packets between AURA and agents',
+      title: 'Coordinating Work',
+      desc: 'Coordinating the tools and steps needed to complete the request',
       glow: 'from-sky-400/45 via-indigo-500/30 to-transparent',
       outerRingColor: 'border-sky-400/70',
       icon: Volume2,
@@ -147,8 +147,8 @@ export const AuraCore: React.FC<AuraCoreProps> = ({
       iconColor: 'text-rose-300'
     },
     VERIFYING: {
-      title: 'Compliance & Verification',
-      desc: 'Scanning code syntax, responsive DOM & accessibility',
+      title: 'Verifying Result',
+      desc: 'Checking the result for correctness and quality',
       glow: 'from-indigo-500/45 via-purple-500/30 to-transparent',
       outerRingColor: 'border-indigo-400/70',
       icon: CheckCircle2,
@@ -156,7 +156,7 @@ export const AuraCore: React.FC<AuraCoreProps> = ({
     },
     SUCCESS: {
       title: 'Execution Completed',
-      desc: 'Pipeline execution verified and production ready',
+      desc: 'Work completed and verified',
       glow: 'from-emerald-400/55 via-teal-500/35 to-transparent',
       outerRingColor: 'border-emerald-400/80',
       icon: CheckCircle2,

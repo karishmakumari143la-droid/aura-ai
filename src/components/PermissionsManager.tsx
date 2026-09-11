@@ -150,7 +150,7 @@ export const PermissionsManager: React.FC<PermissionsManagerProps> = ({
           <h3 className="text-base font-bold text-white">Granular Computer Permissions</h3>
         </div>
         <p className="text-xs text-slate-400">
-          Configure security clearance for autonomous tools and specialist agent access.
+          Configure security clearance for authorized capabilities and AURA capability access.
         </p>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">

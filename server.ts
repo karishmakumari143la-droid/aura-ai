@@ -2,7 +2,6 @@ import express, { Request, Response } from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
-import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 import { createServer as createViteServer } from 'vite';
 import { AsyncLocalStorage } from 'async_hooks';
@@ -10,10 +9,6 @@ import { randomBytes, scryptSync, timingSafeEqual } from 'crypto';
 import { 
   User, 
   Task, 
-  TaskNode, 
-  TaskEdge, 
-  AgentMessage, 
-  VirtualAgent, 
   MemoryItem, 
   MemoryProposal, 
   ImprovementSuggestion, 
@@ -34,15 +29,6 @@ import {
 } from './src/server/auth/githubOAuth';
 import { GitHubStore } from './src/server/storage/githubStore';
 import { recordAuditLog, getAuditLogs } from './src/server/audit/auditLogger';
-import {
-  getUPIConfig,
-  createUPIOrder,
-  submitOrderUTR,
-  verifyUPIOrder,
-  rejectUPIOrder,
-  getUPIOrder,
-  listUPIOrders
-} from './src/server/payments/upiPaymentService';
 import { AuraDB } from './src/server/db/auraDb';
 import { RealExecutor } from './src/server/runtime/realExecutor';
 import { N8NClient } from './src/server/integrations/n8nClient';
@@ -55,25 +41,6 @@ const __dirname = path.dirname(__filename);
 const PORT = Number(process.env.PORT) || 3000;
 const OWNER_EMAIL = (process.env.OWNER_EMAIL || '').toLowerCase().trim();
 
-// Initialize Gemini SDK securely on server side
-const apiKey = process.env.GEMINI_API_KEY;
-let aiClient: GoogleGenAI | null = null;
-if (apiKey && apiKey !== 'MY_GEMINI_API_KEY') {
-  try {
-    aiClient = new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build'
-        }
-      }
-    });
-    console.log('[Gemini] AI Client initialized successfully on server.');
-  } catch (err) {
-    console.warn('[Gemini] Warning initializing Gemini client:', err);
-  }
-}
-
 // -------------------------------------------------------------
 // USER STORE (Authentication & Roles)
 // -------------------------------------------------------------
@@ -83,8 +50,6 @@ const defaultOwner: User = {
   email: defaultOwnerEmail,
   name: 'Karishma Kumari (Owner)',
   role: 'OWNER',
-  subscriptionPlan: 'ENTERPRISE',
-  subscriptionStatus: 'active',
   createdAt: new Date().toISOString(),
   isOwner: true
 };
@@ -175,165 +140,6 @@ function getAuthenticatedUser(req?: Request): User {
 }
 
 // -------------------------------------------------------------
-// VIRTUAL AGENT REGISTRY (5 Core Working Agents + Expansion)
-// -------------------------------------------------------------
-const initialAgents: VirtualAgent[] = [
-  {
-    id: 'agent-aura',
-    name: 'AURA',
-    code: 'AURA',
-    role: 'Central AI Orchestrator & Decomposer',
-    category: 'core',
-    stationId: 'station-command',
-    stationName: 'AI Command Center',
-    color: '#06B6D4',
-    accentColor: 'rgba(6, 182, 212, 0.2)',
-    avatarIcon: 'Brain',
-    pixelSprite: 'orchestrator_core',
-    status: 'idle',
-    animation: 'idle',
-    currentActivity: 'Monitoring command ingress and neural memory stream',
-    energy: 100,
-    tasksCompleted: 42,
-    allowedTools: ['systemTool', 'memoryTool', 'delegatorTool']
-  },
-  {
-    id: 'agent-pixel',
-    name: 'PIXEL',
-    code: 'PIXEL',
-    role: 'Lead UI/UX & Spatial Systems Architect',
-    category: 'design',
-    stationId: 'station-design',
-    stationName: 'Design & Spatial Studio',
-    color: '#EC4899',
-    accentColor: 'rgba(236, 72, 153, 0.2)',
-    avatarIcon: 'Palette',
-    pixelSprite: 'designer_pixel',
-    status: 'idle',
-    animation: 'idle',
-    currentActivity: 'Standing by for layout synthesis and design tokens',
-    energy: 95,
-    tasksCompleted: 38,
-    allowedTools: ['designTokensTool', 'componentStylerTool', 'imageGenTool']
-  },
-  {
-    id: 'agent-code',
-    name: 'CODE',
-    code: 'CODE',
-    role: 'Senior Full-Stack & Systems Engineer',
-    category: 'development',
-    stationId: 'station-coding',
-    stationName: 'Engineering & Code Lab',
-    color: '#3B82F6',
-    accentColor: 'rgba(59, 130, 246, 0.2)',
-    avatarIcon: 'Terminal',
-    pixelSprite: 'developer_code',
-    status: 'idle',
-    animation: 'idle',
-    currentActivity: 'Ready to build verified components, APIs & routes',
-    energy: 98,
-    tasksCompleted: 51,
-    allowedTools: ['websiteTool', 'filesystemTool', 'githubTool', 'apiScaffoldTool']
-  },
-  {
-    id: 'agent-scout',
-    name: 'SCOUT',
-    code: 'SCOUT',
-    role: 'Strategic Intelligence & Research Agent',
-    category: 'research',
-    stationId: 'station-research',
-    stationName: 'Research & Intelligence Desk',
-    color: '#10B981',
-    accentColor: 'rgba(16, 185, 129, 0.2)',
-    avatarIcon: 'Compass',
-    pixelSprite: 'researcher_scout',
-    status: 'idle',
-    animation: 'idle',
-    currentActivity: 'Awaiting market reconnaissance and domain queries',
-    energy: 92,
-    tasksCompleted: 29,
-    allowedTools: ['browserTool', 'searchTool', 'marketAuditTool']
-  },
-  {
-    id: 'agent-qa',
-    name: 'QA',
-    code: 'QA',
-    role: 'Automated Verification & Accessibility Inspector',
-    category: 'quality',
-    stationId: 'station-qa',
-    stationName: 'QA & Compliance Chamber',
-    color: '#8B5CF6',
-    accentColor: 'rgba(139, 92, 246, 0.2)',
-    avatarIcon: 'ShieldCheck',
-    pixelSprite: 'verifier_qa',
-    status: 'idle',
-    animation: 'idle',
-    currentActivity: 'Linter and WCAG accessibility scanners armed',
-    energy: 99,
-    tasksCompleted: 64,
-    allowedTools: ['linterTool', 'contrastVerifierTool', 'securityAuditTool']
-  },
-  {
-    id: 'agent-research',
-    name: 'RESEARCH',
-    code: 'RESEARCH',
-    role: 'Market Intelligence & Data Analyst',
-    category: 'research',
-    stationId: 'station-research-lab',
-    stationName: 'Market & Data Intelligence Lab',
-    color: '#06B6D4',
-    accentColor: 'rgba(6, 182, 212, 0.2)',
-    avatarIcon: 'Database',
-    pixelSprite: 'analyst_research',
-    status: 'idle',
-    animation: 'idle',
-    currentActivity: 'Continuous market sentiment and data crawling ready',
-    energy: 96,
-    tasksCompleted: 45,
-    allowedTools: ['marketCrawlerTool', 'sentimentAnalyzerTool', 'dataSynthesizerTool']
-  },
-  {
-    id: 'agent-deploy',
-    name: 'DEPLOY',
-    code: 'DEPLOY',
-    role: 'Cloud Runtime & Production Infrastructure Engineer',
-    category: 'operations',
-    stationId: 'station-cloud-ops',
-    stationName: 'Production Cloud & CI/CD Deck',
-    color: '#14B8A6',
-    accentColor: 'rgba(20, 184, 166, 0.2)',
-    avatarIcon: 'Globe',
-    pixelSprite: 'devops_deploy',
-    status: 'idle',
-    animation: 'idle',
-    currentActivity: 'Edge container cluster healthy, zero-downtime pipeline standing by',
-    energy: 100,
-    tasksCompleted: 78,
-    allowedTools: ['containerDeployerTool', 'edgeConfigTool', 'sslProvisionerTool']
-  },
-  {
-    id: 'agent-content',
-    name: 'CONTENT',
-    code: 'CONTENT',
-    role: 'Creative Copywriter & SEO Strategist',
-    category: 'marketing',
-    stationId: 'station-content-studio',
-    stationName: 'Copy & Search Optimization Studio',
-    color: '#F59E0B',
-    accentColor: 'rgba(245, 158, 11, 0.2)',
-    avatarIcon: 'FileText',
-    pixelSprite: 'copywriter_content',
-    status: 'idle',
-    animation: 'idle',
-    currentActivity: 'High-conversion headline and structured JSON-LD schema builder armed',
-    energy: 94,
-    tasksCompleted: 53,
-    allowedTools: ['copywriterTool', 'seoAuditTool', 'headlineOptimizerTool']
-  }
-];
-
-let agents: VirtualAgent[] = [...initialAgents];
-
 // -------------------------------------------------------------
 // COMPUTER PERMISSIONS & LOCAL COMPANION ARCHITECTURE
 // -------------------------------------------------------------
@@ -681,133 +487,6 @@ function responseForLanguage(language: 'hi' | 'en' | 'hinglish', english: string
 }
 
 // -------------------------------------------------------------
-// INITIAL MULTI-AGENT DAG TASK STORE
-// -------------------------------------------------------------
-const demoTasks: Task[] = [
-  {
-    taskId: 'tsk-001',
-    userId: 'usr-owner',
-    title: 'Deploy High-Performance Gym Landing Architecture',
-    description: 'Deconstruct user command into parallel research & design, implement responsive website with pricing, WhatsApp CTA, and run QA verification.',
-    status: 'COMPLETED',
-    priority: 'high',
-    nodes: [
-      {
-        id: 'node-1',
-        title: 'Research Industry Benchmarks & User Flow',
-        agentId: 'agent-scout',
-        agentName: 'SCOUT',
-        role: 'Research',
-        level: 0,
-        dependsOn: [],
-        status: 'completed',
-        progress: 100,
-        detail: 'Analyzed top 15 boutique strength facilities. Extracted average pricing tiers ($89 - $269) and CTA placement.',
-        logs: ['[SCOUT] Crawled 15 competitor structures', '[SCOUT] Synthesized optimal 3-tier membership model'],
-        completedAt: 'Earlier'
-      },
-      {
-        id: 'node-2',
-        title: 'Formulate Visual Design Tokens & Spatial Layout',
-        agentId: 'agent-pixel',
-        agentName: 'PIXEL',
-        role: 'Design',
-        level: 0,
-        dependsOn: [],
-        status: 'completed',
-        progress: 100,
-        detail: 'Formulated dark obsidian visual hierarchy, high-contrast display typography, and mobile card paddings.',
-        logs: ['[PIXEL] Designed responsive glass cards', '[PIXEL] Computed 44px minimum touch targets for mobile CTAs'],
-        completedAt: 'Earlier'
-      },
-      {
-        id: 'node-3',
-        title: 'Assemble Component Tree & WhatsApp VIP CTA Handler',
-        agentId: 'agent-code',
-        agentName: 'CODE',
-        role: 'Development',
-        level: 1,
-        dependsOn: ['node-1', 'node-2'],
-        status: 'completed',
-        progress: 100,
-        detail: 'Integrated findings from SCOUT and design tokens from PIXEL. Built 3 pricing cards and direct WhatsApp reservation.',
-        logs: ['[CODE] Received payload from SCOUT & PIXEL', '[CODE] Compiled responsive HTML & DOM tree without errors'],
-        completedAt: 'Earlier'
-      },
-      {
-        id: 'node-4',
-        title: 'Automated Responsive DOM Lint & Accessibility Scan',
-        agentId: 'agent-qa',
-        agentName: 'QA',
-        role: 'Verification',
-        level: 2,
-        dependsOn: ['node-3'],
-        status: 'completed',
-        progress: 100,
-        detail: 'Passed all 14 accessibility checks. Color contrast 6.2:1 (exceeds WCAG 2.1 AA 4.5:1 ratio).',
-        logs: ['[QA] Checked 3 viewports: 375px, 768px, 1440px', '[QA] 0 HTML syntax errors, 0 broken links'],
-        completedAt: 'Earlier'
-      }
-    ],
-    edges: [
-      { from: 'node-1', to: 'node-3' },
-      { from: 'node-2', to: 'node-3' },
-      { from: 'node-3', to: 'node-4' }
-    ],
-    messages: [
-      { id: 'm1', sender: 'SCOUT', receiver: 'CODE', type: 'DATA_PACKET', payload: { competitorPricing: [89, 149, 269] }, timestamp: 'Earlier' },
-      { id: 'm2', sender: 'PIXEL', receiver: 'CODE', type: 'DATA_PACKET', payload: { theme: 'obsidian-glow', radius: '16px' }, timestamp: 'Earlier' },
-      { id: 'm3', sender: 'CODE', receiver: 'QA', type: 'VERIFICATION_REQUEST', payload: { domReady: true }, timestamp: 'Earlier' }
-    ],
-    createdAt: new Date(Date.now() - 3600000).toISOString(),
-    updatedAt: new Date().toISOString(),
-    result: 'Vanguard Fitness project compiled successfully with zero syntax warnings and verified mobile responsiveness.',
-    logs: [
-      '[AURA] Deconstructed command into 2 parallel branches at Level 0',
-      '[SCOUT + PIXEL] Executed simultaneously in parallel',
-      '[CODE] Succeeded upon receiving outputs from node-1 and node-2',
-      '[QA] Verified accessibility and DOM readiness'
-    ]
-  }
-];
-
-// Live task history starts empty. Development fixtures stay isolated from user activity.
-const tasks: Task[] = [];
-const commandTaskIndex = new Map<string, string>();
-const conversationContexts = new Map<string, {
-  language: 'hi' | 'en' | 'hinglish';
-  activeWebsiteId?: string;
-  websiteBusiness?: WebsiteProject['category'];
-  websiteName?: string;
-  websiteRequirements?: string[];
-  lastUserMessage?: string;
-  lastAuraResponse?: string;
-  pendingClarification?: 'website_business' | 'website_name' | 'website_features';
-}>();
-
-function storeTask(task: Task, commandId: string): Task {
-  task.commandId = commandId;
-  tasks.unshift(task);
-  const commandKey = `${task.userId}:${commandId}`;
-  commandTaskIndex.set(commandKey, task.taskId);
-  try {
-    AuraDB.upsertTask(task);
-    AuraDB.setTaskCommandIndex(commandKey, task.taskId);
-  } catch (err) {
-    console.warn('[AuraDB] Task persistence notice:', err);
-  }
-  return task;
-}
-
-function getConversationContext(userId: string) {
-  let context = conversationContexts.get(userId);
-  if (!context) {
-    context = { language: 'en' as const };
-    conversationContexts.set(userId, context);
-  }
-  return context;
-}
-
 // Helper: Retrieve relevant memory items based on search terms
 function getRelevantMemories(prompt: string): MemoryItem[] {
   const lower = prompt.toLowerCase();
@@ -920,8 +599,6 @@ async function startServer() {
       email: cleanEmail,
       name,
       role: isOwner ? 'OWNER' : 'FREE_USER',
-      subscriptionPlan: isOwner ? 'ENTERPRISE' : 'FREE',
-      subscriptionStatus: 'active',
       createdAt: new Date().toISOString(),
       isOwner
     };
@@ -994,1363 +671,29 @@ async function startServer() {
   // ===========================================================
   // 2. AURA BRAIN: CENTRAL ORCHESTRATOR & PARALLEL DAG ENGINE
   // ===========================================================
-  app.post('/api/ai/orchestrate', async (req: Request, res: Response) => {
-    const currentUser = getRequestUser(req);
-    const { prompt, commandId } = req.body;
-    if (!prompt) return res.status(400).json({ error: 'Command prompt is required' });
-    if (!commandId || typeof commandId !== 'string') return res.status(400).json({ error: 'commandId is required' });
-
-    const commandKey = `${currentUser.id}:${commandId}`;
-    const existingTaskId = commandTaskIndex.get(commandKey);
-    if (existingTaskId === '__pending__') return res.status(409).json({ error: 'Command is already being processed', commandId });
-    if (existingTaskId) {
-      const existingTask = tasks.find(task => task.taskId === existingTaskId);
-      if (existingTask) return res.json({ task: existingTask, summary: 'This command was already accepted; returning its existing task.', language: activeContext.language });
-    }
-    commandTaskIndex.set(commandKey, '__pending__');
-
-    const lowerPrompt = prompt.toLowerCase().trim();
-    const conversationContext = getConversationContext(currentUser.id);
-    conversationContext.language = detectConversationLanguage(prompt);
-    conversationContext.lastUserMessage = prompt;
-    activeContext.language = conversationContext.language;
-    const relevantMemories = getRelevantMemories(prompt);
-
-    if (conversationContext.pendingClarification === 'website_business' && /^(gym|restaurant|salon|portfolio|agency|ecommerce|real estate|real-estate)\b/i.test(lowerPrompt)) {
-      commandTaskIndex.delete(commandKey);
-      const category = lowerPrompt.includes('restaurant') ? 'restaurant' : lowerPrompt.includes('salon') ? 'salon' : lowerPrompt.includes('portfolio') ? 'portfolio' : lowerPrompt.includes('agency') ? 'agency' : lowerPrompt.includes('real') ? 'real-estate' : 'gym';
-      conversationContext.websiteBusiness = category;
-      conversationContext.pendingClarification = 'website_name';
-      const answer = responseForLanguage(activeContext.language, `${category[0].toUpperCase() + category.slice(1)} website. What should I call the project?`, `${category[0].toUpperCase() + category.slice(1)} website. Iska naam kya rakhein?`, `${category[0].toUpperCase() + category.slice(1)} वेबसाइट का नाम क्या रखें?`);
-      conversationContext.lastAuraResponse = answer;
-      return res.json({ task: null, answer, summary: 'Business type saved; project name requested.', language: activeContext.language, auraState: 'SPEAKING' });
-    }
-
-    if (conversationContext.pendingClarification === 'website_name' && prompt.trim().length > 1 && prompt.trim().length < 80 && !detectExplicitAction(prompt)) {
-      commandTaskIndex.delete(commandKey);
-      conversationContext.websiteName = prompt.trim();
-      conversationContext.pendingClarification = 'website_features';
-      const answer = responseForLanguage(activeContext.language, `Nice. What should the ${prompt.trim()} website include: just the website, or WhatsApp booking too?`, `Nice. ${prompt.trim()} ke liye sirf website chahiye ya WhatsApp booking bhi?`, `बहुत अच्छा। ${prompt.trim()} वेबसाइट में केवल वेबसाइट चाहिए या WhatsApp बुकिंग भी?`);
-      conversationContext.lastAuraResponse = answer;
-      return res.json({ task: null, answer, summary: 'Project name saved; requirements requested.', language: activeContext.language, auraState: 'SPEAKING' });
-    }
-
-    if (conversationContext.pendingClarification === 'website_features' && /whatsapp|booking/i.test(lowerPrompt)) {
-      commandTaskIndex.delete(commandKey);
-      conversationContext.websiteRequirements = [...new Set([...(conversationContext.websiteRequirements || []), 'whatsapp'])];
-      const answer = responseForLanguage(activeContext.language, 'Got it. WhatsApp booking is included. Shall I create the website now?', 'Got it. WhatsApp booking bhi include karte hain. Ab website bana doon?', 'समझ गया। WhatsApp बुकिंग शामिल है। क्या अब वेबसाइट बनाऊँ?');
-      conversationContext.lastAuraResponse = answer;
-      return res.json({ task: null, answer, summary: 'Requirements saved; waiting for confirmation.', language: activeContext.language, auraState: 'SPEAKING' });
-    }
-
-    const isPendingWebsiteConfirmation = conversationContext.pendingClarification === 'website_features' && /\b(haan|yes|okay|ok|bana do|create it|go ahead)\b/i.test(lowerPrompt);
-
-    const intentMode = classifyIntent(prompt);
-    const isCasualConversation = intentMode === 'CONVERSATION';
-    if (!isPendingWebsiteConfirmation && (intentMode === 'CONVERSATION' || intentMode === 'QUESTION')) {
-      commandTaskIndex.delete(commandKey);
-      const answer = isCasualConversation
-        ? responseForLanguage(activeContext.language, "I'm good and ready to help. What are we working on today?", 'Main bilkul ready hoon. Batao, aaj kya karna hai?', 'मैं तैयार हूँ। बताइए, आज क्या करना है?')
-        : responseForLanguage(activeContext.language, 'I can explain that from the available project context and configured tools.', 'Main available project context aur configured tools ke basis par samjha sakti hoon.', 'मैं उपलब्ध प्रोजेक्ट संदर्भ और configured tools के आधार पर समझा सकती हूँ।');
-      conversationContext.lastAuraResponse = answer;
-      return res.json({
-        task: null,
-        answer,
-        summary: 'Conversation answered without creating an execution task.',
-        language: activeContext.language,
-        auraState: 'SPEAKING'
-      });
-    }
-
-    const isIncompleteWebsiteRequest = intentMode === 'CLARIFICATION';
-    if (isIncompleteWebsiteRequest) {
-      commandTaskIndex.delete(commandKey);
-      conversationContext.pendingClarification = 'website_business';
-      const answer = responseForLanguage(activeContext.language, 'Sure. What kind of business is the website for?', 'Bilkul. Kis business ke liye website banani hai?', 'बिल्कुल। वेबसाइट किस व्यवसाय के लिए बनानी है?');
-      conversationContext.lastAuraResponse = answer;
-      return res.json({
-        task: null,
-        answer,
-        summary: 'Clarification requested before creating an execution task.',
-        language: activeContext.language,
-        auraState: 'SPEAKING'
-      });
-    }
-
-    const confirmingWebsitePlan = conversationContext.pendingClarification === 'website_features' && /\b(haan|yes|okay|ok|bana do|create it|go ahead|whatsapp|booking)\b/i.test(lowerPrompt);
-    if (conversationContext.pendingClarification === 'website_features' && /whatsapp|booking/i.test(lowerPrompt)) {
-      conversationContext.websiteRequirements = [...new Set([...(conversationContext.websiteRequirements || []), 'whatsapp'])];
-    }
-    if (confirmingWebsitePlan) {
-      conversationContext.pendingClarification = undefined;
-    }
-
-    // -------------------------------------------------------------
-    // HIGH-ACCURACY NATURAL SCENARIO RECOGNIZERS (AURA LIVING COMPANION)
-    // -------------------------------------------------------------
-
-    // 1. "Hello Aura." or greetings (Conversations must NOT create tasks or DAGs)
-    if (lowerPrompt === 'hello aura.' || lowerPrompt === 'hello aura' || lowerPrompt === 'hi aura' || lowerPrompt === 'hey aura' || lowerPrompt === 'namaste aura' || lowerPrompt === 'hello' || lowerPrompt === 'hi') {
-      commandTaskIndex.delete(commandKey);
-      const understanding = 'User greeting and conversational check-in';
-      const summary = responseForLanguage(
-        activeContext.language,
-        'Hello! Always glad to be here with you. What are we planning, building, or automating today?',
-        'Hello! AURA online hai. Aaj hum kya plan, build ya automate karenge?',
-        'नमस्ते! मैं तैयार हूँ। बताइए, आज क्या प्लान या कोड बनाना है?'
-      );
-      conversationContext.lastAuraResponse = summary;
-      return res.json({
-        task: null,
-        understanding,
-        summary,
-        answer: summary,
-        auraState: 'SPEAKING',
-        userEmotion: 'CALM',
-        language: activeContext.language
-      });
-    }
-
-    // 2. "हिंदी में बात करो।" (Language switch must NOT create tasks or DAGs)
-    if (lowerPrompt.includes('हिंदी में बात') || lowerPrompt.includes('बात हिंदी में') || lowerPrompt.includes('speak in hindi') || lowerPrompt.includes('hindi me bolo') || lowerPrompt.includes('hindi mein')) {
-      commandTaskIndex.delete(commandKey);
-      activeContext.language = 'hi';
-      conversationContext.language = 'hi';
-      const understanding = 'Switch primary conversational interface language to Hindi';
-      const summary = 'हाँ बिल्कुल! अब से हम हिंदी में ही बात करेंगे। बताइए, आज किस प्रोजेक्ट पर काम करना है या क्या नया बनाना है?';
-      conversationContext.lastAuraResponse = summary;
-      return res.json({
-        task: null,
-        understanding,
-        summary,
-        answer: summary,
-        auraState: 'SPEAKING',
-        userEmotion: 'CALM',
-        language: 'hi'
-      });
-    }
-
-    // 3. "Can you speak English?" (Language switch must NOT create tasks or DAGs)
-    if (lowerPrompt.includes('speak english') || lowerPrompt.includes('can you speak english') || lowerPrompt.includes('english please') || lowerPrompt.includes('switch to english')) {
-      commandTaskIndex.delete(commandKey);
-      activeContext.language = 'en';
-      conversationContext.language = 'en';
-      const understanding = 'Verify and switch primary conversational interface language to English';
-      const summary = 'Yes, absolutely! I am completely fluent in English, Hindi, and Hinglish. What would you like to build, plan, or automate today?';
-      conversationContext.lastAuraResponse = summary;
-      return res.json({
-        task: null,
-        understanding,
-        summary,
-        answer: summary,
-        auraState: 'SPEAKING',
-        userEmotion: 'CALM',
-        language: 'en'
-      });
-    }
-
-    // 4. "Restaurant वाली website खोलो।"
-    if (lowerPrompt.includes('restaurant') && (lowerPrompt.includes('खोलो') || lowerPrompt.includes('open') || lowerPrompt.includes('dekho') || lowerPrompt.includes('preview') || lowerPrompt.includes('dikhao') || lowerPrompt.includes('website'))) {
-      const restSite = websites.find(w => w.category === 'restaurant') || websites[1] || websites[0];
-      activeContext.activeWebsiteId = restSite.id;
-      activeContext.lastAction = 'open_restaurant';
-      const understanding = 'Open restaurant website project and set active context';
-      const summary = `मैंने आपकी restaurant website "${restSite.name}" लोड कर दी है। आप इसका live preview देख सकते हैं या मुझे design, pricing या layout में कोई भी बदलाव करने के लिए कह सकते हैं।`;
-
-      const openTask: Task = {
-        taskId: 'tsk-' + Math.random().toString(36).substr(2, 9),
-        userId: currentUser.id,
-        title: `Open Project: ${restSite.name}`,
-        description: prompt,
-        status: 'COMPLETED',
-        priority: 'high',
-        nodes: [{
-          id: 'node-open-site',
-          title: `Load ${restSite.name} in Preview Sandbox`,
-          agentId: 'agent-scout',
-          agentName: 'SCOUT',
-          role: 'Project Navigator',
-          level: 0,
-          dependsOn: [],
-          status: 'completed',
-          progress: 100,
-          detail: `Active website context set to ${restSite.id} (${restSite.name}).`,
-          logs: [`[SCOUT] Opened ${restSite.slug} in sandbox viewer.`]
-        }],
-        edges: [],
-        messages: [],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        logs: [`[${new Date().toLocaleTimeString()}] Active project context set to "${restSite.name}".`]
-      };
-      storeTask(openTask, commandId);
-      return res.json({
-        task: openTask,
-        understanding,
-        summary,
-        website: restSite,
-        openWebsite: true,
-        auraState: 'WORKING',
-        language: activeContext.language
-      });
-    }
-
-    // 5. "इसका design premium कर दो।"
-    if ((lowerPrompt.includes('design') || lowerPrompt.includes('look') || lowerPrompt.includes('theme')) && (lowerPrompt.includes('premium') || lowerPrompt.includes('luxury') || lowerPrompt.includes('kar do') || lowerPrompt.includes('badlo') || lowerPrompt.includes('dark'))) {
-      const currentSite = websites.find(w => w.id === activeContext.activeWebsiteId) || websites[1] || websites[0];
-      currentSite.headline = 'An Epicurean Symphony of Royal Charcoal & Saffron Infusions';
-      currentSite.description = 'Curated obsidian dark luxury dining experience with private tasting salon, gold typography accents, and 24/7 VIP concierge.';
-      currentSite.updatedAt = new Date().toISOString();
-      const understanding = `Upgrade active website (${currentSite.name}) to Obsidian Dark Premium Luxury aesthetic`;
-      const summary = `मैंने आपकी website "${currentSite.name}" का design 'Obsidian Dark Gold Luxury' में अपग्रेड कर दिया है। Typography, dark spatial cards, और luxury accents को refine कर दिया गया है।`;
-
-      const designTask: Task = {
-        taskId: 'tsk-' + Math.random().toString(36).substr(2, 9),
-        userId: currentUser.id,
-        title: `Design Upgrade: Obsidian Dark Luxury for ${currentSite.name}`,
-        description: prompt,
-        status: 'COMPLETED',
-        priority: 'high',
-        nodes: [
-          {
-            id: 'node-pixel-dark',
-            title: 'Generate Obsidian & Champagne Gold Theme Tokens',
-            agentId: 'agent-pixel',
-            agentName: 'PIXEL',
-            role: 'Spatial UI Architect',
-            level: 0,
-            dependsOn: [],
-            status: 'completed',
-            progress: 100,
-            detail: 'Applied dark obsidian (#07090E), warm gold (#E6B980), and refined serif display font.',
-            logs: ['[PIXEL] Injected premium luxury design token matrix']
-          },
-          {
-            id: 'node-qa-audit',
-            title: 'Verify WCAG AA Dark Contrast & Typography Legibility',
-            agentId: 'agent-qa',
-            agentName: 'QA',
-            role: 'Quality & Accessibility Inspector',
-            level: 1,
-            dependsOn: ['node-pixel-dark'],
-            status: 'completed',
-            progress: 100,
-            detail: 'Verified contrast ratio 8.2:1 and zero clipping on mobile screens.',
-            logs: ['[QA] Dark theme passed all accessibility benchmarks']
-          }
-        ],
-        edges: [{ from: 'node-pixel-dark', to: 'node-qa-audit' }],
-        messages: [],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        logs: [`[${new Date().toLocaleTimeString()}] Design tokens upgraded to Obsidian Dark Luxury.`]
-      };
-      storeTask(designTask, commandId);
-      return res.json({
-        task: designTask,
-        understanding,
-        summary,
-        website: currentSite,
-        auraState: 'SUCCESS',
-        language: activeContext.language
-      });
-    }
-
-    // 6. "मेरी pricing update करो।" or "अब pricing section को ₹999 कर दो।"
-    if (lowerPrompt.includes('pricing') || lowerPrompt.includes('price') || lowerPrompt.includes('rate') || lowerPrompt.includes('999')) {
-      const currentSite = websites.find(w => w.id === activeContext.activeWebsiteId) || websites[1] || websites[0];
-      const targetPrice = '₹999';
-      currentSite.pricing[0].price = targetPrice;
-      currentSite.pricing[0].name = 'Exclusive Tasting / Entry Pass';
-      currentSite.pricing[0].features = ['Chef Signature Platter', 'Welcome Elixir Mocktail', 'Priority Table Booking', 'Digital Loyalty Pass'];
-      currentSite.updatedAt = new Date().toISOString();
-      const understanding = `Update pricing matrix on active website (${currentSite.name}) to ${targetPrice}`;
-      const summary = `मैंने आपकी active website "${currentSite.name}" की pricing को ${targetPrice} tier में सफलतापूर्वक update कर दिया है। live preview में pricing cards तुरंत reflect हो रहे हैं।`;
-
-      const priceTask: Task = {
-        taskId: 'tsk-' + Math.random().toString(36).substr(2, 9),
-        userId: currentUser.id,
-        title: `Update Pricing Matrix to ${targetPrice}`,
-        description: prompt,
-        status: 'COMPLETED',
-        priority: 'high',
-        nodes: [
-          {
-            id: 'node-price-code',
-            title: `Update Pricing Tier DOM & Calculations to ${targetPrice}`,
-            agentId: 'agent-code',
-            agentName: 'CODE',
-            role: 'Engineering Lead',
-            level: 0,
-            dependsOn: [],
-            status: 'completed',
-            progress: 100,
-            detail: `Reflected ${targetPrice} on primary CTA and updated WhatsApp pre-filled inquiry text.`,
-            logs: [`[CODE] Pricing tier updated to ${targetPrice}`]
-          }
-        ],
-        edges: [],
-        messages: [],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        logs: [`[${new Date().toLocaleTimeString()}] Pricing tier calibrated to ${targetPrice}.`]
-      };
-      storeTask(priceTask, commandId);
-      return res.json({
-        task: priceTask,
-        understanding,
-        summary,
-        website: currentSite,
-        auraState: 'SUCCESS',
-        language: activeContext.language
-      });
-    }
-
-    // 7. "मुझे बहुत stress हो रहा है।" (Emotional conversation must NOT create tasks or DAGs)
-    if (lowerPrompt.includes('stress') || lowerPrompt.includes('tension') || lowerPrompt.includes('परेशान') || lowerPrompt.includes('घबराहट') || lowerPrompt.includes('anxious') || lowerPrompt.includes('overwhelmed') || lowerPrompt.includes('थक गया')) {
-      commandTaskIndex.delete(commandKey);
-      activeContext.userEmotion = 'STRESSED';
-      const understanding = 'User is experiencing high cognitive stress and emotional tension';
-      const summary = 'लगता है आप पर इस समय काफी तनाव या stress है। एक गहरी सांस लीजिए, चिंता मत करिए। कभी-कभी बहुत सारी चीजें एक साथ आ जाने से ऐसा महसूस होना स्वाभाविक है। अगर आप चाहें तो मुझे बताइए क्या चल रहा है—मैं यहीं हूँ। हम मिलकर सब संभाल लेंगे और आपके भारी कामों को छोटे-छोटे, आसान steps में बाँट देंगे।';
-      conversationContext.lastAuraResponse = summary;
-      return res.json({
-        task: null,
-        understanding,
-        summary,
-        answer: summary,
-        auraState: 'EMPATHY',
-        userEmotion: 'STRESSED',
-        language: activeContext.language
-      });
-    }
-
-    // 8. "मेरे आज के काम organize कर दो।"
-    if ((lowerPrompt.includes('काम') || lowerPrompt.includes('tasks') || lowerPrompt.includes('routine')) && (lowerPrompt.includes('organize') || lowerPrompt.includes('manage') || lowerPrompt.includes('plan'))) {
-      const understanding = 'Organize user daily tasks into a prioritized topological DAG roadmap';
-      const summary = 'मैंने आपके आज के सारे कामों को प्राथमिकता (Priority 1: Urgent Deliverables, Priority 2: Core Engineering, Priority 3: Verification & Recovery) के अनुसार structured DAG plan में व्यवस्थित कर दिया है।';
-
-      const planTask: Task = {
-        taskId: 'tsk-' + Math.random().toString(36).substr(2, 9),
-        userId: currentUser.id,
-        title: 'Daily Task Organization: 3-Tier Priority Roadmap',
-        description: prompt,
-        status: 'RUNNING',
-        priority: 'high',
-        nodes: [
-          {
-            id: 'node-day-urgent',
-            title: 'Priority 1: Review Urgent Inquiries & WhatsApp Leads',
-            agentId: 'agent-scout',
-            agentName: 'SCOUT',
-            role: 'Triage Specialist',
-            level: 0,
-            dependsOn: [],
-            status: 'running',
-            progress: 45,
-            detail: 'Filtering pending customer queries and commercial inquiries.',
-            logs: ['[SCOUT] Priority 1 triage in progress']
-          },
-          {
-            id: 'node-day-build',
-            title: 'Priority 2: Execute Website Refinements & Core Coding',
-            agentId: 'agent-code',
-            agentName: 'CODE',
-            role: 'Engineering Lead',
-            level: 1,
-            dependsOn: ['node-day-urgent'],
-            status: 'waiting',
-            progress: 0,
-            detail: 'Pushing design updates and testing checkout conversions.',
-            logs: ['[CODE] Queued behind priority 1 triage']
-          },
-          {
-            id: 'node-day-qa',
-            title: 'Priority 3: System Audit, Backup & Evening Rest Protocol',
-            agentId: 'agent-qa',
-            agentName: 'QA',
-            role: 'Health & Compliance',
-            level: 2,
-            dependsOn: ['node-day-build'],
-            status: 'waiting',
-            progress: 0,
-            detail: 'Logging progress, clearing cache, and scheduling restful downtime.',
-            logs: ['[QA] Queued for evening review']
-          }
-        ],
-        edges: [
-          { from: 'node-day-urgent', to: 'node-day-build' },
-          { from: 'node-day-build', to: 'node-day-qa' }
-        ],
-        messages: [],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        logs: [`[${new Date().toLocaleTimeString()}] Structured daily roadmap created.`]
-      };
-      storeTask(planTask, commandId);
-      return res.json({
-        task: planTask,
-        understanding,
-        summary,
-        auraState: 'PLANNING',
-        language: activeContext.language
-      });
-    }
-
-    // 10. "Research और design दोनों साथ में शुरू करो।"
-    if ((lowerPrompt.includes('research') || lowerPrompt.includes('scout')) && (lowerPrompt.includes('design') || lowerPrompt.includes('pixel')) && (lowerPrompt.includes('साथ') || lowerPrompt.includes('parallel') || lowerPrompt.includes('simultaneous') || lowerPrompt.includes('dono'))) {
-      const understanding = 'Launch parallel simultaneous execution of SCOUT (Research) and PIXEL (Design) at Level 0';
-      const summary = 'SCOUT (Market Research) और PIXEL (Spatial UI Design) दोनों को एक साथ Level 0 parallel mode में trigger कर दिया गया है। दोनों बिना किसी bottleneck के स्वतंत्र रूप से चल रहे हैं।';
-
-      const parallelTask: Task = {
-        taskId: 'tsk-' + Math.random().toString(36).substr(2, 9),
-        userId: currentUser.id,
-        title: 'Parallel Level 0 Execution: SCOUT & PIXEL',
-        description: prompt,
-        status: 'RUNNING',
-        priority: 'high',
-        nodes: [
-          {
-            id: 'node-scout-parallel',
-            title: 'SCOUT: Market Intelligence & Benchmarks',
-            agentId: 'agent-scout',
-            agentName: 'SCOUT',
-            role: 'Research',
-            level: 0,
-            dependsOn: [],
-            status: 'running',
-            progress: 50,
-            detail: 'Parallel stream 1: Analyzing competitor pricing and conversion patterns.',
-            logs: ['[SCOUT] Crawling market benchmarks concurrently']
-          },
-          {
-            id: 'node-pixel-parallel',
-            title: 'PIXEL: Spatial Design System & UI Tokens',
-            agentId: 'agent-pixel',
-            agentName: 'PIXEL',
-            role: 'Design',
-            level: 0,
-            dependsOn: [],
-            status: 'running',
-            progress: 50,
-            detail: 'Parallel stream 2: Constructing layout hierarchy and obsidian color system.',
-            logs: ['[PIXEL] Formulating tokens concurrently']
-          },
-          {
-            id: 'node-code-merge',
-            title: 'CODE: Merge Synthesis & WhatsApp Integration',
-            agentId: 'agent-code',
-            agentName: 'CODE',
-            role: 'Development',
-            level: 1,
-            dependsOn: ['node-scout-parallel', 'node-pixel-parallel'],
-            status: 'waiting',
-            progress: 0,
-            detail: 'Awaiting completion of both Level 0 parallel streams.',
-            logs: ['[CODE] Queued behind Level 0 completions']
-          }
-        ],
-        edges: [
-          { from: 'node-scout-parallel', to: 'node-code-merge' },
-          { from: 'node-pixel-parallel', to: 'node-code-merge' }
-        ],
-        messages: [],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        logs: [`[${new Date().toLocaleTimeString()}] Launched SCOUT and PIXEL simultaneously in parallel.`]
-      };
-      storeTask(parallelTask, commandId);
-      return res.json({
-        task: parallelTask,
-        understanding,
-        summary,
-        auraState: 'EXECUTING',
-        language: activeContext.language
-      });
-    }
-
-    // 11. "जब काम पूरा हो जाए मुझे बताना।"
-    if ((lowerPrompt.includes('काम पूरा') || lowerPrompt.includes('complete') || lowerPrompt.includes('finish') || lowerPrompt.includes('khatam')) && (lowerPrompt.includes('बताओ') || lowerPrompt.includes('बताना') || lowerPrompt.includes('notify') || lowerPrompt.includes('alert'))) {
-      const understanding = 'Register real-time audio and visual notification alert on task completion';
-      const summary = 'बिल्कुल, समझ गया। जैसे ही सभी parallel agents (SCOUT, PIXEL, CODE, QA) अपना काम पूरा करेंगे, मैं आपको ऑडियो चाइम और स्क्रीन नोटिफिकेशन दोनों के जरिए तुरंत सूचित करूँगा।';
-
-      const alertTask: Task = {
-        taskId: 'tsk-' + Math.random().toString(36).substr(2, 9),
-        userId: currentUser.id,
-        title: 'Task Completion Notification Listener',
-        description: prompt,
-        status: 'COMPLETED',
-        priority: 'low',
-        nodes: [{
-          id: 'node-alert-reg',
-          title: 'Register Event Notification Hook',
-          agentId: 'agent-aura',
-          agentName: 'AURA',
-          role: 'Notification Dispatcher',
-          level: 0,
-          dependsOn: [],
-          status: 'completed',
-          progress: 100,
-          detail: 'Task completion hook registered. Speech & toast triggers primed.',
-          logs: ['[AURA] Notification alert armed']
-        }],
-        edges: [],
-        messages: [],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        logs: [`[${new Date().toLocaleTimeString()}] Notification listener configured.`]
-      };
-      storeTask(alertTask, commandId);
-      return res.json({
-        task: alertTask,
-        understanding,
-        summary,
-        auraState: 'COMMUNICATING',
-        language: activeContext.language
-      });
-    }
-
-    // 12. "मेरी preference याद रखो कि websites dark premium होनी चाहिए।"
-    if (lowerPrompt.includes('preference याद रखो') || lowerPrompt.includes('remember my preference') || (lowerPrompt.includes('preference') && lowerPrompt.includes('dark'))) {
-      const prefTitle = 'Website Aesthetic: Dark Premium';
-      const prefContent = 'Websites and UI systems must always default to dark obsidian palette with refined typography and gold luxury accents.';
-      
-      const newMem: MemoryItem = {
-        memoryId: 'mem-' + Date.now(),
-        userId: currentUser.id,
-        category: 'USER_PREFERENCES',
-        title: prefTitle,
-        content: prefContent,
-        source: 'user_command',
-        importance: 'high',
-        confidence: 1.0,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-      memoryDatabase.unshift(newMem);
-
-      const understanding = 'Persist explicit user design preference into Neural Long-Term Memory Core';
-      const summary = "आपकी preference को मैंने अपनी permanent memory में save कर लिया है: 'Websites must be dark premium luxury'. अब से कोई भी नई website या design हमेशा इसी obsidian dark premium palette के साथ बनाई जाएगी।";
-
-      const memTask: Task = {
-        taskId: 'tsk-' + Math.random().toString(36).substr(2, 9),
-        userId: currentUser.id,
-        title: 'Neural Memory: Save Design Preference',
-        description: prompt,
-        status: 'COMPLETED',
-        priority: 'normal',
-        nodes: [{
-          id: 'node-save-mem',
-          title: 'Store User Preference in Vector Index',
-          agentId: 'agent-aura',
-          agentName: 'AURA',
-          role: 'Memory Engine',
-          level: 0,
-          dependsOn: [],
-          status: 'completed',
-          progress: 100,
-          detail: `Saved to memoryDatabase with confidence 1.0: ${prefContent}`,
-          logs: ['[AURA] Permanent memory stored successfully']
-        }],
-        edges: [],
-        messages: [],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        logs: [`[${new Date().toLocaleTimeString()}] Saved preference into long-term memory.`]
-      };
-      storeTask(memTask, commandId);
-      return res.json({
-        task: memTask,
-        understanding,
-        summary,
-        auraState: 'LEARNING',
-        detectedPreference: prefContent,
-        language: activeContext.language
-      });
-    }
-
-    // 13. "Chrome खोलो और GitHub वाला project देखो।"
-    if ((lowerPrompt.includes('chrome') || lowerPrompt.includes('browser')) && (lowerPrompt.includes('github') || lowerPrompt.includes('repo') || lowerPrompt.includes('project'))) {
-      const understanding = 'Launch sandboxed Chrome browser companion to inspect authorized GitHub project';
-      const summary = 'मैंने Chrome Browser sandbox में GitHub project repository को सुरक्षित रूप से inspect करने के लिए launch कर दिया है। Git commit logs और code structure verified हैं।';
-
-      const chromeTask: Task = {
-        taskId: 'tsk-' + Math.random().toString(36).substr(2, 9),
-        userId: currentUser.id,
-        title: 'Browser Automation: Inspect GitHub Project Repository',
-        description: prompt,
-        status: 'COMPLETED',
-        priority: 'high',
-        nodes: [
-          {
-            id: 'node-browser-perm',
-            title: 'Verify BROWSER_CONTROL & GIT_ACCESS Permissions',
-            agentId: 'agent-qa',
-            agentName: 'QA',
-            role: 'Security Gate',
-            level: 0,
-            dependsOn: [],
-            status: 'completed',
-            progress: 100,
-            detail: 'Security clearances verified: BROWSER_CONTROL=ALLOWED, GIT_ACCESS=ALLOWED.',
-            logs: ['[QA] Permissions valid for local container sandbox']
-          },
-          {
-            id: 'node-browser-launch',
-            title: 'Launch Headless Chromium & Inspect Repository Trees',
-            agentId: 'agent-scout',
-            agentName: 'SCOUT',
-            role: 'Desktop Companion',
-            level: 1,
-            dependsOn: ['node-browser-perm'],
-            status: 'completed',
-            progress: 100,
-            detail: 'Repository DOM parsed. 14 commits inspected, package.json dependencies verified.',
-            logs: ['[SCOUT] GitHub repository analyzed in Chromium sandbox']
-          }
-        ],
-        edges: [{ from: 'node-browser-perm', to: 'node-browser-launch' }],
-        messages: [],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        logs: [`[${new Date().toLocaleTimeString()}] Chrome sandbox GitHub inspection complete.`]
-      };
-      storeTask(chromeTask, commandId);
-      return res.json({
-        task: chromeTask,
-        understanding,
-        summary,
-        auraState: 'WORKING',
-        language: activeContext.language
-      });
-    }
-
-    // 14. "इसमें mobile layout ठीक करो।"
-    if ((lowerPrompt.includes('mobile') || lowerPrompt.includes('phone') || lowerPrompt.includes('responsive')) && (lowerPrompt.includes('layout') || lowerPrompt.includes('theek') || lowerPrompt.includes('fix') || lowerPrompt.includes('optimize'))) {
-      const currentSite = websites.find(w => w.id === activeContext.activeWebsiteId) || websites[1] || websites[0];
-      currentSite.updatedAt = new Date().toISOString();
-      const understanding = `Optimize mobile layout & responsive viewports on active website (${currentSite.name})`;
-      const summary = `मैंने active website "${currentSite.name}" के mobile layout को optimize कर दिया है। सभी touch targets को 48px, responsive typography clamp, और fluid mobile grid में calibrate कर दिया गया है।`;
-
-      const mobileTask: Task = {
-        taskId: 'tsk-' + Math.random().toString(36).substr(2, 9),
-        userId: currentUser.id,
-        title: `Mobile Layout Optimization for ${currentSite.name}`,
-        description: prompt,
-        status: 'COMPLETED',
-        priority: 'high',
-        nodes: [
-          {
-            id: 'node-mobile-pixel',
-            title: 'Re-align Viewport Media Queries & 48px Touch Targets',
-            agentId: 'agent-pixel',
-            agentName: 'PIXEL',
-            role: 'Spatial Designer',
-            level: 0,
-            dependsOn: [],
-            status: 'completed',
-            progress: 100,
-            detail: 'Calibrated sm/md/lg breakpoints and ensured full-width touch accessibility.',
-            logs: ['[PIXEL] Mobile styling tokens calibrated']
-          },
-          {
-            id: 'node-mobile-qa',
-            title: 'Simulate iPhone & Android Viewport Rendering',
-            agentId: 'agent-qa',
-            agentName: 'QA',
-            role: 'Viewport Auditor',
-            level: 1,
-            dependsOn: ['node-mobile-pixel'],
-            status: 'completed',
-            progress: 100,
-            detail: 'Zero horizontal scroll overflow detected, 100% WCAG AA mobile pass.',
-            logs: ['[QA] Mobile viewport verification complete']
-          }
-        ],
-        edges: [{ from: 'node-mobile-pixel', to: 'node-mobile-qa' }],
-        messages: [],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        logs: [`[${new Date().toLocaleTimeString()}] Mobile layout calibrated and verified.`]
-      };
-      storeTask(mobileTask, commandId);
-      return res.json({
-        task: mobileTask,
-        understanding,
-        summary,
-        website: currentSite,
-        auraState: 'SUCCESS',
-        language: activeContext.language
-      });
-    }
-
-    // -------------------------------------------------------------
-    // GENERAL & DEEP TASK DECOMPOSITION (provider / fallback)
-    // -------------------------------------------------------------
-    
-    // Check if task is sensitive and requires human sign-off
-    const isSensitive = lowerPrompt.includes('deploy to prod') || 
-                        lowerPrompt.includes('delete') || 
-                        lowerPrompt.includes('spend') || 
-                        lowerPrompt.includes('purchase domain') || 
-                        lowerPrompt.includes('format drive') ||
-                        lowerPrompt.includes('mass message');
-
-    let detectedCategory: WebsiteProject['category'] = conversationContext.websiteBusiness || 'gym';
-    if (lowerPrompt.includes('restaurant') || lowerPrompt.includes('food') || lowerPrompt.includes('dining') || lowerPrompt.includes('bana do')) {
-      detectedCategory = 'restaurant';
-    } else if (lowerPrompt.includes('salon') || lowerPrompt.includes('spa') || lowerPrompt.includes('beauty')) {
-      detectedCategory = 'salon';
-    } else if (lowerPrompt.includes('real estate') || lowerPrompt.includes('property')) {
-      detectedCategory = 'real-estate';
-    } else if (lowerPrompt.includes('portfolio') || lowerPrompt.includes('developer')) {
-      detectedCategory = 'portfolio';
-    } else if (lowerPrompt.includes('agency') || lowerPrompt.includes('marketing')) {
-      detectedCategory = 'agency';
-    }
-
-    const isWebsiteTask = confirmingWebsitePlan || lowerPrompt.includes('website') || 
-                          lowerPrompt.includes('gym') || 
-                          lowerPrompt.includes('restaurant') || 
-                          lowerPrompt.includes('landing') || 
-                          lowerPrompt.includes('bana do');
-
-    let understanding = '';
-    let summary = '';
-    let dagNodes: TaskNode[] = [];
-    let dagEdges: TaskEdge[] = [];
-    let initialMessages: AgentMessage[] = [];
-    let detectedPreference: string | null = null;
-
-    // Check for self-developing memory triggers
-    if (lowerPrompt.includes('whatsapp') && (lowerPrompt.includes('bottom') || lowerPrompt.includes('right') || lowerPrompt.includes('always') || lowerPrompt.includes('hamesha'))) {
-      detectedPreference = 'Always anchor WhatsApp CTA to bottom-right corner';
-    } else if (lowerPrompt.includes('dark mode') || lowerPrompt.includes('dark theme')) {
-      detectedPreference = 'Default to high-contrast dark spatial theme';
-    }
-
-    if (detectedPreference) {
-      const existing = pendingMemoryProposals.find(p => p.content.includes(detectedPreference!));
-      if (!existing) {
-        pendingMemoryProposals.unshift({
-          id: 'prop-' + Math.random().toString(36).substr(2, 7),
-          category: 'USER_PREFERENCES',
-          title: 'Detected User Workflow Preference',
-          content: detectedPreference,
-          reason: `Extracted from natural command: "${prompt}"`,
-          confidence: 0.94,
-          status: 'pending',
-          createdAt: new Date().toISOString()
-        });
-      }
-    }
-
-    // Call Gemini with resilient model fallback if available
-    if (aiClient) {
-      try {
-        const geminiPrompt = `You are AURA BRAIN, the central intelligent AI Orchestrator of AURA AI.
-The user issued this command: "${prompt}"
-Language preference: ${activeContext.language}
-Context Memories: ${JSON.stringify(relevantMemories.map(m => `${m.category}: ${m.content}`))}
-
-Decompose this task into a Directed Acyclic Graph (DAG) with dependency levels so independent tasks execute IN PARALLEL.
-Available Specialist Agents:
-- AURA (id: "agent-aura", role: "Orchestrator & Living AI Core")
-- SCOUT (id: "agent-scout", role: "Research & Intelligence")
-- PIXEL (id: "agent-pixel", role: "Design & Spatial UI")
-- CODE (id: "agent-code", role: "Engineering & Code")
-- QA (id: "agent-qa", role: "Verification & Compliance")
-- RESEARCH (id: "agent-research", role: "Market Intelligence & Data")
-- DEPLOY (id: "agent-deploy", role: "Cloud Runtime & Deployment")
-- CONTENT (id: "agent-content", role: "Copywriting & SEO Engine")
-
-Rules:
-1. Level 0 tasks have NO dependencies (dependsOn: []) and MUST execute in parallel simultaneously (e.g. SCOUT research + PIXEL design).
-2. Level 1 tasks depend on Level 0 tasks (e.g. CODE development).
-3. Level 2 tasks depend on Level 1 (e.g. QA verification).
-4. Provide a realistic, executive understanding and outcome summary.
-
-Return JSON in this EXACT schema:
-{
-  "understanding": "Clear 1-sentence understanding of what the user needs",
-  "summary": "High-level conversational response in English or Hinglish matching user tone",
-  "nodes": [
-    {
-      "id": "node-1",
-      "title": "Short title",
-      "agentId": "agent-scout",
-      "agentName": "SCOUT",
-      "role": "Research",
-      "level": 0,
-      "dependsOn": [],
-      "detail": "Actionable detail of work",
-      "toolUsed": "browserAutomationTool"
-    },
-    {
-      "id": "node-2",
-      "title": "Short title",
-      "agentId": "agent-pixel",
-      "agentName": "PIXEL",
-      "role": "Design",
-      "level": 0,
-      "dependsOn": [],
-      "detail": "Actionable detail of work",
-      "toolUsed": "designTokensTool"
-    },
-    {
-      "id": "node-3",
-      "title": "Short title",
-      "agentId": "agent-code",
-      "agentName": "CODE",
-      "role": "Development",
-      "level": 1,
-      "dependsOn": ["node-1", "node-2"],
-      "detail": "Actionable detail of work",
-      "toolUsed": "websiteTool"
-    },
-    {
-      "id": "node-4",
-      "title": "Short title",
-      "agentId": "agent-qa",
-      "agentName": "QA",
-      "role": "Verification",
-      "level": 2,
-      "dependsOn": ["node-3"],
-      "detail": "Actionable detail of work",
-      "toolUsed": "qaVerifierTool"
-    }
-  ],
-  "edges": [
-    { "from": "node-1", "to": "node-3" },
-    { "from": "node-2", "to": "node-3" },
-    { "from": "node-3", "to": "node-4" }
-  ]
-}`;
-
-        const candidateModels = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
-        let responseText: string | null = null;
-
-        for (const modelName of candidateModels) {
-          try {
-            const response = await aiClient.models.generateContent({
-              model: modelName,
-              contents: geminiPrompt,
-              config: {
-                responseMimeType: 'application/json'
-              }
-            });
-
-            if (response.text) {
-              responseText = response.text;
-              break;
-            }
-          } catch (modelErr: any) {
-            const errMsg = modelErr?.message || String(modelErr);
-            console.warn(`[Gemini] Model ${modelName} notice (${errMsg}). Switching to candidate fallback...`);
-            if (errMsg.includes('503') || errMsg.includes('429') || errMsg.includes('demand')) {
-              await new Promise(r => setTimeout(r, 500));
-            }
-          }
-        }
-
-        if (responseText) {
-          const parsed = JSON.parse(responseText);
-          understanding = parsed.understanding || `Executing request: ${prompt}`;
-          summary = parsed.summary || 'AURA Intelligence Core has planned the task and activated available agent workstations.';
-          
-          if (Array.isArray(parsed.nodes) && parsed.nodes.length > 0) {
-            dagNodes = parsed.nodes.map((n: any) => ({
-              id: n.id,
-              title: n.title,
-              agentId: n.agentId || 'agent-code',
-              agentName: n.agentName || 'CODE',
-              role: n.role || 'Specialist',
-              level: Number(n.level) || 0,
-              dependsOn: Array.isArray(n.dependsOn) ? n.dependsOn : [],
-              status: n.level === 0 ? 'running' : 'waiting',
-              progress: n.level === 0 ? 30 : 0,
-              detail: n.detail || '',
-              logs: [`[${n.agentName}] Initialized node ${n.id}`],
-              startedAt: n.level === 0 ? new Date().toISOString() : undefined,
-              toolUsed: n.toolUsed
-            }));
-            dagEdges = Array.isArray(parsed.edges) ? parsed.edges : [];
-          }
-        }
-      } catch (err: any) {
-        console.warn('[Gemini] Orchestration notice:', err?.message || err);
-      }
-    }
-
-    // Deterministic fallback DAG if Gemini call didn't populate nodes
-    if (dagNodes.length === 0) {
-      understanding = `Directing multi-agent execution pipeline for: "${prompt}"`;
-      summary = isWebsiteTask
-        ? `Task planned. SCOUT and PIXEL are launching simultaneous parallel research & spatial UI design, feeding directly into CODE and QA.`
-        : `Task accepted. AURA has decomposed the instruction into available analytical and execution branches.`;
-
-      if (isWebsiteTask) {
-        dagNodes = [
-          {
-            id: 'node-1',
-            title: `Research ${detectedCategory.toUpperCase()} Architecture & Benchmarks`,
-            agentId: 'agent-scout',
-            agentName: 'SCOUT',
-            role: 'Research',
-            level: 0,
-            dependsOn: [],
-            status: 'running',
-            progress: 35,
-            detail: `Synthesizing top-tier competitive structures, hero value statements, and pricing matrices for ${detectedCategory}.`,
-            logs: [`[SCOUT] Crawling benchmark standards for ${detectedCategory}`],
-            startedAt: new Date().toISOString(),
-            toolUsed: 'browserAutomationTool'
-          },
-          {
-            id: 'node-2',
-            title: 'Formulate Spatial Layout & Design Tokens',
-            agentId: 'agent-pixel',
-            agentName: 'PIXEL',
-            role: 'Design',
-            level: 0,
-            dependsOn: [],
-            status: 'running',
-            progress: 35,
-            detail: 'Constructing dark obsidian layout hierarchy, high-contrast typography pairings, and responsive cards.',
-            logs: ['[PIXEL] Generating design token stylesheet and spatial geometry'],
-            startedAt: new Date().toISOString(),
-            toolUsed: 'designTokensTool'
-          },
-          {
-            id: 'node-3',
-            title: `Assemble Verified ${detectedCategory.toUpperCase()} Components & WhatsApp CTA`,
-            agentId: 'agent-code',
-            agentName: 'CODE',
-            role: 'Development',
-            level: 1,
-            dependsOn: ['node-1', 'node-2'],
-            status: 'waiting',
-            progress: 0,
-            detail: 'Synthesizing responsive DOM structure, 3-tier pricing calculator, and instant WhatsApp booking link.',
-            logs: ['[CODE] Waiting for outputs from SCOUT (node-1) and PIXEL (node-2)'],
-            toolUsed: 'websiteTool'
-          },
-          {
-            id: 'node-4',
-            title: 'Automated Responsive DOM Lint & Accessibility Verification',
-            agentId: 'agent-qa',
-            agentName: 'QA',
-            role: 'Verification',
-            level: 2,
-            dependsOn: ['node-3'],
-            status: 'waiting',
-            progress: 0,
-            detail: 'Inspecting HTML semantic validity, mobile viewport responsiveness, and WCAG AA color contrast.',
-            logs: ['[QA] Awaiting code completion from CODE (node-3)'],
-            toolUsed: 'qaVerifierTool'
-          }
-        ];
-
-        dagEdges = [
-          { from: 'node-1', to: 'node-3' },
-          { from: 'node-2', to: 'node-3' },
-          { from: 'node-3', to: 'node-4' }
-        ];
-      } else {
-        dagNodes = [
-          {
-            id: 'node-1',
-            title: 'Analyze Business Constraints & Rules',
-            agentId: 'agent-scout',
-            agentName: 'SCOUT',
-            role: 'Research',
-            level: 0,
-            dependsOn: [],
-            status: 'running',
-            progress: 40,
-            detail: 'Scanning memory base and environmental parameters.',
-            logs: ['[SCOUT] Retrieved active business rules and user permissions'],
-            startedAt: new Date().toISOString()
-          },
-          {
-            id: 'node-2',
-            title: 'Execute Specialist Workflow',
-            agentId: 'agent-code',
-            agentName: 'CODE',
-            role: 'Development',
-            level: 1,
-            dependsOn: ['node-1'],
-            status: 'waiting',
-            progress: 0,
-            detail: 'Applying logic and executing authorized internal tools.',
-            logs: ['[CODE] Queued behind research validation'],
-            toolUsed: 'websiteTool'
-          },
-          {
-            id: 'node-3',
-            title: 'Security & Quality Verification',
-            agentId: 'agent-qa',
-            agentName: 'QA',
-            role: 'Verification',
-            level: 2,
-            dependsOn: ['node-2'],
-            status: 'waiting',
-            progress: 0,
-            detail: 'Verifying outputs and logging execution metrics.',
-            logs: ['[QA] Queued behind development completion'],
-            toolUsed: 'qaVerifierTool'
-          }
-        ];
-
-        dagEdges = [
-          { from: 'node-1', to: 'node-2' },
-          { from: 'node-2', to: 'node-3' }
-        ];
-      }
-    }
-
-    // Update Virtual Agents' working statuses
-    dagNodes.forEach(node => {
-      const ag = agents.find(a => a.id === node.agentId);
-      if (ag) {
-        if (node.status === 'running') {
-          ag.status = 'working';
-          ag.animation = 'working';
-          ag.currentActivity = node.title;
-        } else {
-          ag.status = 'thinking';
-          ag.animation = 'thinking';
-          ag.currentActivity = `Queued for ${node.title}`;
-        }
-      }
-    });
-
-    // Create persistent Task
-    const newTaskId = 'tsk-' + Math.random().toString(36).substr(2, 9);
-    const newTask: Task = {
-      taskId: newTaskId,
-      userId: currentUser.id,
-      title: prompt.length > 55 ? prompt.substring(0, 52) + '...' : prompt,
-      description: prompt,
-      status: isSensitive ? 'WAITING_FOR_APPROVAL' : 'RUNNING',
-      priority: 'high',
-      nodes: dagNodes,
-      edges: dagEdges,
-      messages: initialMessages,
-      approval: isSensitive ? {
-        id: 'appr-' + Math.random().toString(36).substr(2, 7),
-        taskId: newTaskId,
-        type: 'production_deploy',
-        title: 'Authorized Human Sign-off Required',
-        description: `Command contains high-impact action: "${prompt}". Autonomous changes paused until verified.`,
-        impactLevel: 'high',
-        details: { prompt, user: currentUser.name, timestamp: new Date().toISOString() },
-        status: 'pending',
-        createdAt: new Date().toISOString()
-      } : undefined,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      executionStartedAt: isSensitive ? undefined : new Date().toISOString(),
-      logs: [
-        `[${new Date().toLocaleTimeString()}] AURA Intelligence Core accepted command: "${prompt}"`,
-        `[${new Date().toLocaleTimeString()}] Parallel Level 0 nodes activated: ${dagNodes.filter(n => n.level === 0).map(n => n.agentName).join(', ')}`,
-        `[${new Date().toLocaleTimeString()}] Status: ${isSensitive ? 'WAITING FOR APPROVAL' : 'RUNNING PARALLEL PIPELINE'}`
-      ]
-    };
-
-    storeTask(newTask, commandId);
-
-    // If website creation, also synthesize WebsiteProject (with server-side quota enforcement)
-    let generatedWebsite: WebsiteProject | null = null;
-    let quotaStatus = checkProjectLimit(currentUser);
-
-    if (isWebsiteTask) {
-      if (!quotaStatus.allowed) {
-        // Enforce server-side limit: Reject project creation
-        const limitMsg = "Today's 5-project limit is reached. Your project allowance will reset tomorrow. All existing projects remain open and editable with unlimited tasks.";
-        newTask.status = 'COMPLETED';
-        newTask.title = `Daily Project Allowance Reached (5/5 Projects Used)`;
-        newTask.nodes = [{
-          id: 'node-limit-reached',
-          title: 'Daily Project Allowance Reached (5/5 Projects)',
-          agentId: 'agent-aura',
-          agentName: 'AURA',
-          role: 'Access Monitor',
-          level: 0,
-          dependsOn: [],
-          status: 'completed',
-          progress: 100,
-          detail: "Today's 5-project limit is reached. Your project allowance will reset tomorrow. Existing projects remain fully usable with unlimited tasks.",
-          logs: [
-            '[AURA Access Monitor] Daily project limit (5/5) reached for free tier.',
-            '[AURA Access Monitor] No new project created. Existing projects retain full capability.'
-          ],
-          completedAt: 'Just now'
-        }];
-        newTask.edges = [];
-        newTask.logs.push(`[${new Date().toLocaleTimeString()}] Project creation limit verified: 5/5 used today.`);
-
-        return res.json({
-          task: newTask,
-          understanding: 'Project creation paused: Daily allowance of 5 projects reached',
-          summary: limitMsg,
-          website: null,
-          quota: quotaStatus,
-          auraState: 'ERROR',
-          userEmotion: 'CALM',
-          language: activeContext.language
-        });
-      }
-
-      const siteId = 'web-' + Math.random().toString(36).substr(2, 8);
-      const isRestaurant = detectedCategory === 'restaurant';
-      const siteName = conversationContext.websiteName || (isRestaurant ? 'L’Aura Artisanal Dining' : 'IronCore High-Performance Gym');
-
-      generatedWebsite = {
-        id: siteId,
-        name: siteName,
-        category: detectedCategory,
-        slug: `${detectedCategory}-${Date.now().toString(36)}`,
-        headline: isRestaurant 
-          ? 'Crafting Unforgettable Culinary Journeys with Seasonal Terroir'
-          : 'Forge Elite Physical Condition & Unstoppable Strength',
-        description: `Engineered for prompt: "${prompt}". Includes 3-tier transparent pricing, ${conversationContext.websiteRequirements?.includes('whatsapp') ? 'automated WhatsApp instant booking bridge' : 'clear contact options'}, and verified WCAG accessibility.`,
-        pricing: isRestaurant ? [
-          { name: 'Chef Tasting', price: '$95', period: '/guest', features: ['5-Course Seasonal Degustation', 'Sommelier Water Pairing', 'Priority Garden Seating'] },
-          { name: 'Signature Terroir', price: '$155', period: '/guest', features: ['7-Course Truffle & Wagyu Journey', 'Vintage Wine Pairing Included', 'Kitchen Tour & Digestif'] },
-          { name: 'Private Cellar VIP', price: '$275', period: '/guest', features: ['Custom Bespoke 9-Course Menu', 'Rare Reserve Vintage Pairings', 'Personal Executive Chef Attention'] }
-        ] : [
-          { name: 'Core Athlete', price: '$89', period: '/mo', features: ['Full Floor Access', 'Locker & Sauna Access', 'Mobile Check-in'] },
-          { name: 'Performance Pro', price: '$149', period: '/mo', features: ['All Core Features', 'Personal Training Sessions', 'Hyrox & HIIT Classes', 'Macro Guide'] },
-          { name: 'Championship VIP', price: '$269', period: '/mo', features: ['Unlimited Coaching', 'Infrared Sauna & Cold Plunge', 'Complimentary Shakes', '24/7 Access'] }
-        ],
-        whatsappNumber: '+1 (555) 892-0129',
-        whatsappCtaText: isRestaurant ? 'Reserve VIP Chef Table via WhatsApp' : 'Claim Your Free VIP Pass via WhatsApp',
-        contactEmail: 'vip@example.com',
-        heroImage: isRestaurant 
-          ? 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=1200&q=80'
-          : 'https://images.unsplash.com/photo-1534438327276-14e5300c3a48?auto=format&fit=crop&w=1200&q=80',
-        sections: [
-          { id: 'about', title: 'The Philosophy', content: 'Obsessive dedication to quality, precision craftsmanship, and unforgettable guest experiences.' },
-          { id: 'pricing', title: 'Tiers & Memberships', content: 'Transparent offerings designed to provide remarkable, uninterrupted value.' },
-          { id: 'contact', title: 'Instant Reservations', content: 'Connect instantly with our team through our dedicated WhatsApp VIP concierge.' }
-        ],
-        status: 'draft',
-        seo: {
-          metaTitle: `${siteName} | Official Platform`,
-          metaDescription: `Reserve direct with ${siteName}. High performance experience with automated concierge.`,
-          keywords: [detectedCategory, 'vip booking', 'pricing', 'high performance']
-        },
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-
-      recordProjectCreation(currentUser, siteId);
-      quotaStatus = checkProjectLimit(currentUser);
-      websites.unshift(generatedWebsite);
-      newTask.projectId = generatedWebsite.id;
-      conversationContext.activeWebsiteId = generatedWebsite.id;
-      conversationContext.pendingClarification = undefined;
-    }
-
-    res.json({
-      task: newTask,
-      understanding,
-      summary,
-      website: generatedWebsite,
-      quota: quotaStatus,
-      detectedPreference,
-      auraState: 'EXECUTING',
-      userEmotion: activeContext.userEmotion,
-      language: activeContext.language
+  app.post('/api/ai/orchestrate', async (_req: Request, res: Response) => {
+    return res.status(410).json({
+      error: 'LEGACY_ORCHESTRATION_DISABLED',
+      message: 'AURA now uses the Central AURA Brain. Use /api/brain/turn.'
     });
   });
 
-  // ===========================================================
-  // 3. PARALLEL DAG PROGRESSION ENGINE
-  // ===========================================================
-  app.post('/api/tasks/:id/advance', (req: Request, res: Response) => {
-    const currentUser = getRequestUser(req);
-    const task = tasks.find(t => t.taskId === req.params.id);
-    if (!task) return res.status(404).json({ error: 'Task not found' });
-    if (currentUser.role !== 'OWNER' && task.userId !== currentUser.id) return res.status(403).json({ error: 'Task access denied' });
-    if (['COMPLETED', 'FAILED', 'CANCELLED', 'WAITING_FOR_APPROVAL'].includes(task.status)) {
-      return res.json({ task, agents, idempotent: true });
-    }
 
-    // Identify currently running nodes and complete them
-    const currentlyRunning = task.nodes.filter(n => n.status === 'running');
-    
-    if (currentlyRunning.length > 0) {
-      currentlyRunning.forEach(node => {
-        const isVerificationNode = node.agentName === 'QA' || node.agentId === 'agent-qa';
-        const verification = isVerificationNode
-          ? verifyWebsiteProject(task.projectId ? websites.find(website => website.id === task.projectId) : undefined)
-          : null;
-
-        if (verification && !verification.ok) {
-          node.status = 'failed';
-          node.progress = 100;
-          node.logs.push(`[${node.agentName}] Verification failed: ${verification.detail}`);
-          task.status = 'FAILED';
-          task.error = verification.detail;
-          task.executionCompletedAt = new Date().toISOString();
-          task.verification = verification.detail;
-          task.logs.push(`[AURA] Task stopped during verification: ${verification.detail}`);
-          return;
-        }
-
-        node.status = 'completed';
-        node.progress = 100;
-        node.completedAt = 'Just now';
-        node.logs.push(`[${node.agentName}] ${verification?.detail || 'Execution step completed.'}`);
-
-        // Emit message to dependent nodes
-        const downstreamEdges = task.edges.filter(e => e.from === node.id);
-        downstreamEdges.forEach(edge => {
-          const targetNode = task.nodes.find(n => n.id === edge.to);
-          if (targetNode) {
-            task.messages.push({
-              id: 'msg-' + Math.random().toString(36).substr(2, 7),
-              sender: node.agentName,
-              receiver: targetNode.agentName,
-              type: 'DATA_PACKET',
-              payload: { completedNode: node.id, agent: node.agentName },
-              timestamp: 'Just now'
-            });
-          }
-        });
-
-        // Set agent to success briefly
-        const ag = agents.find(a => a.id === node.agentId);
-        if (ag) {
-          ag.status = 'success';
-          ag.animation = 'success';
-          ag.tasksCompleted += 1;
-        }
-      });
-    }
-
-    // Now find waiting nodes whose dependencies are all completed!
-    const completedNodeIds = new Set(task.nodes.filter(n => n.status === 'completed').map(n => n.id));
-    const nextCandidates = task.nodes.filter(n => n.status === 'waiting');
-
-    const newlyReady = nextCandidates.filter(candidate => {
-      return candidate.dependsOn.every(parentId => completedNodeIds.has(parentId));
-    });
-
-    if (newlyReady.length > 0) {
-      // Transition all newly ready nodes to RUNNING simultaneously (Parallel!)
-      newlyReady.forEach(node => {
-        node.status = 'running';
-        node.progress = 40;
-        node.startedAt = new Date().toISOString();
-        node.logs.push(`[${node.agentName}] Dependencies satisfied. Running simultaneous task...`);
-
-        const ag = agents.find(a => a.id === node.agentId);
-        if (ag) {
-          ag.status = 'working';
-          ag.animation = 'working';
-          ag.currentActivity = node.title;
-        }
-      });
-
-      task.status = newlyReady.some(node => node.agentName === 'QA' || node.agentId === 'agent-qa') ? 'VERIFYING' : 'RUNNING';
-      task.logs.push(`[AURA] Parallel execution wave dispatched: ${newlyReady.map(n => n.agentName).join(', ')}`);
-    } else {
-      // Check if all nodes are completed
-      const allCompleted = task.nodes.every(n => n.status === 'completed');
-      if (allCompleted) {
-        task.status = 'COMPLETED';
-        task.result = task.projectId
-          ? 'Project artifact passed server-side structural verification.'
-          : 'All configured internal execution steps completed.';
-        task.verification = task.result;
-        task.executionCompletedAt = new Date().toISOString();
-        task.logs.push(`[AURA] DAG verification completed with recorded checks.`);
-        if (task.projectId) {
-          const project = websites.find(website => website.id === task.projectId);
-          if (project) {
-            project.status = 'ready';
-            project.updatedAt = new Date().toISOString();
-          }
-        }
-
-        // Reset agents to idle
-        agents.forEach(a => {
-          a.status = 'idle';
-          a.animation = 'idle';
-          a.currentActivity = 'Standing by for next directive';
-        });
-      }
-    }
-
-    task.updatedAt = new Date().toISOString();
-    res.json({ task, agents });
-  });
-
-  // Human Approval actions
-  app.post('/api/tasks/:id/approve', (req: Request, res: Response) => {
-    const currentUser = getRequestUser(req);
-    const task = tasks.find(t => t.taskId === req.params.id);
-    if (!task) return res.status(404).json({ error: 'Task not found' });
-    if (currentUser.role !== 'OWNER' && task.userId !== currentUser.id) return res.status(403).json({ error: 'Task access denied' });
-
-    if (task.approval) {
-      task.approval.status = 'approved';
-      task.status = 'RUNNING';
-      task.logs.push(`[AURA] Human authorization GRANTED by ${currentUser.name}. Resuming parallel pipeline.`);
-    }
-
-    res.json({ task, message: 'Authorized by user.' });
-  });
-
-  app.post('/api/tasks/:id/reject', (req: Request, res: Response) => {
-    const currentUser = getRequestUser(req);
-    const task = tasks.find(t => t.taskId === req.params.id);
-    if (!task) return res.status(404).json({ error: 'Task not found' });
-    if (currentUser.role !== 'OWNER' && task.userId !== currentUser.id) return res.status(403).json({ error: 'Task access denied' });
-
-    if (task.approval) {
-      task.approval.status = 'rejected';
-      task.status = 'CANCELLED';
-      task.logs.push(`[AURA] Human authorization REJECTED by ${currentUser.name}. Execution cancelled.`);
-    }
-
-    res.json({ task, message: 'Action rejected by user.' });
-  });
-
-  // Tasks list
-  app.get('/api/tasks', (req: Request, res: Response) => {
-    const currentUser = getRequestUser(req);
-    const visibleTasks = currentUser.role === 'OWNER' ? tasks : tasks.filter(task => task.userId === currentUser.id);
-    res.json({ tasks: visibleTasks });
-  });
-
-  app.get('/api/tasks/:id', (req: Request, res: Response) => {
-    const currentUser = getRequestUser(req);
-    const task = tasks.find(t => t.taskId === req.params.id);
-    if (!task) return res.status(404).json({ error: 'Task not found' });
-    if (currentUser.role !== 'OWNER' && task.userId !== currentUser.id) return res.status(403).json({ error: 'Task access denied' });
-    res.json({ task });
-  });
 
   // ===========================================================
-  // 4. VIRTUAL AGENTS & WORKSTATIONS
+  // LEGACY DAG PROGRESSION ENGINE — DISABLED
   // ===========================================================
-  app.get('/api/agents', (req: Request, res: Response) => {
-    res.json({ agents });
-  });
 
-  app.post('/api/agents/:id/reset', (req: Request, res: Response) => {
-    const ag = agents.find(a => a.id === req.params.id);
-    if (ag) {
-      ag.status = 'idle';
-      ag.animation = 'idle';
-      ag.currentActivity = 'Standing by for next directive';
-    }
-    res.json({ agent: ag });
-  });
+        // ===========================================================
+  // 4. LEGACY AGENT API — DISABLED
+  // ===========================================================
 
+      // ===========================================================
+  // CONTINUE SERVER
+  // ===========================================================
+  // ===========================================================
+  // 3. LEGACY TASK COMPATIBILITY — DISABLED
+  // ===========================================================
   // ===========================================================
   // 5. STRUCTURED MEMORY ENGINE & SELF-DEVELOPING PROPOSALS
   // ===========================================================
@@ -2640,220 +983,6 @@ Return JSON in this EXACT schema:
     });
   });
 
-  app.get('/api/subscriptions', (req: Request, res: Response) => {
-    const currentUser = getRequestUser(req);
-    const quota = checkProjectLimit(currentUser);
-    res.json({
-      currentPlan: currentUser.subscriptionPlan || 'FREE',
-      status: currentUser.subscriptionStatus || 'active',
-      isFreePhase: true,
-      message: 'AURA AI is 100% free for all users. 5 new projects every calendar day with unlimited tasks per project.',
-      quota,
-      upiPaymentAvailable: true
-    });
-  });
-
-  // ===========================================================
-  // 8B. DIRECT UPI PAYMENTS (Zero Payment Gateway)
-  // Configured via UPI_ID=9818691915@pytes
-  // ===========================================================
-  app.get('/api/upi/config', (req: Request, res: Response) => {
-    const config = getUPIConfig();
-    res.json({
-      config,
-      paymentGateway: 'NONE (Direct UPI P2P/P2M)',
-      verificationRequired: true,
-      notice: 'Direct UPI payments settle to the owner VPA. UTR reference verification is required before plan upgrades.'
-    });
-  });
-
-  app.post('/api/upi/orders', async (req: Request, res: Response) => {
-    try {
-      const currentUser = getRequestUser(req);
-      const { planId = 'PRO_MONTHLY', planName = 'Pro Plan ($20/mo / ₹499)', amount = 499 } = req.body;
-
-      const numAmount = Math.max(1, Number(amount) || 499);
-      const order = await createUPIOrder({
-        userId: currentUser.id,
-        userEmail: currentUser.email,
-        userName: currentUser.name,
-        planId,
-        planName,
-        amount: numAmount
-      });
-
-      recordAuditLog({
-        event: 'UPI_ORDER_CREATED',
-        userId: currentUser.id,
-        status: 'SUCCESS',
-        details: { orderId: order.orderId, amount: numAmount, planId, vpa: order.payeeVpa }
-      });
-
-      res.status(201).json({
-        success: true,
-        order
-      });
-    } catch (err: any) {
-      console.error('[UPI] Error creating order:', err);
-      res.status(500).json({ error: 'Failed to create UPI order: ' + (err?.message || 'Unknown error') });
-    }
-  });
-
-  app.get('/api/upi/orders', (req: Request, res: Response) => {
-    const currentUser = getRequestUser(req);
-    const orders = currentUser.role === 'OWNER' ? listUPIOrders() : listUPIOrders(currentUser.id);
-    res.json({ orders });
-  });
-
-  app.get('/api/upi/orders/:id', (req: Request, res: Response) => {
-    const currentUser = getRequestUser(req);
-    const order = getUPIOrder(req.params.id);
-    if (!order) {
-      return res.status(404).json({ error: 'UPI order not found' });
-    }
-    if (currentUser.role !== 'OWNER' && currentUser.role !== 'ADMIN' && order.userId !== currentUser.id) {
-      return res.status(403).json({ error: 'Access denied' });
-    }
-    res.json({ order });
-  });
-
-  app.post('/api/upi/orders/:id/submit-utr', (req: Request, res: Response) => {
-    const currentUser = getRequestUser(req);
-    const { utr } = req.body;
-
-    if (!utr) {
-      return res.status(400).json({ error: 'UPI UTR / Transaction Reference number is required' });
-    }
-
-    const result = submitOrderUTR(req.params.id, String(utr), currentUser.id);
-    if (!result.success) {
-      return res.status(400).json({ error: result.error });
-    }
-
-    recordAuditLog({
-      event: 'UPI_UTR_SUBMITTED',
-      userId: currentUser.id,
-      status: 'SUCCESS',
-      details: { orderId: req.params.id, utr: result.order?.customerUtr }
-    });
-
-    res.json({
-      success: true,
-      message: 'UTR submitted successfully. Your transaction is now queued for verification against the bank account.',
-      order: result.order
-    });
-  });
-
-  // Owner / Admin Verification of UPI Payment
-  app.post('/api/admin/upi/orders/:id/verify', (req: Request, res: Response) => {
-    const currentUser = getRequestUser(req);
-    if (currentUser.role !== 'OWNER' && currentUser.role !== 'ADMIN') {
-      return res.status(403).json({ error: 'Owner or admin access required to verify payments' });
-    }
-
-    const result = verifyUPIOrder(req.params.id, `${currentUser.name} (${currentUser.role})`);
-    if (!result.success || !result.order) {
-      return res.status(400).json({ error: result.error || 'Failed to verify order' });
-    }
-
-    // Upgrade the customer's user record upon real verification
-    const targetUser = users.find(u => u.id === result.order!.userId);
-    if (targetUser) {
-      targetUser.subscriptionPlan = 'PRO';
-      targetUser.subscriptionStatus = 'active';
-      console.log(`[UPI] Upgraded user ${targetUser.email} (${targetUser.id}) to PRO after UPI verification.`);
-    }
-
-    recordAuditLog({
-      event: 'UPI_PAYMENT_VERIFIED',
-      userId: currentUser.id,
-      status: 'SUCCESS',
-      details: {
-        orderId: result.order.orderId,
-        customerUserId: result.order.userId,
-        customerUtr: result.order.customerUtr,
-        amount: result.order.amount,
-        verifiedBy: currentUser.email
-      }
-    });
-
-    res.json({
-      success: true,
-      message: `Order ${result.order.orderId} verified successfully and user upgraded to PRO.`,
-      order: result.order,
-      upgradedUser: targetUser
-    });
-  });
-
-  // Owner / Admin Rejection of UPI Payment
-  app.post('/api/admin/upi/orders/:id/reject', (req: Request, res: Response) => {
-    const currentUser = getRequestUser(req);
-    if (currentUser.role !== 'OWNER' && currentUser.role !== 'ADMIN') {
-      return res.status(403).json({ error: 'Owner or admin access required to reject payments' });
-    }
-
-    const { reason = 'Transaction reference not found in bank statement' } = req.body;
-    const result = rejectUPIOrder(req.params.id, reason);
-    if (!result.success) {
-      return res.status(400).json({ error: result.error || 'Failed to reject order' });
-    }
-
-    recordAuditLog({
-      event: 'UPI_PAYMENT_REJECTED',
-      userId: currentUser.id,
-      status: 'WARNING',
-      details: {
-        orderId: req.params.id,
-        reason,
-        rejectedBy: currentUser.email
-      }
-    });
-
-    res.json({
-      success: true,
-      message: `Order ${req.params.id} rejected.`,
-      order: result.order
-    });
-  });
-
-  // Automated bank confirmation webhook (for direct bank webhook callbacks)
-  app.post('/api/upi/webhook/bank-confirm', (req: Request, res: Response) => {
-    const { orderId, utr, token } = req.body;
-    // Real verification check
-    if (!orderId || !utr) {
-      return res.status(400).json({ error: 'Missing orderId or utr' });
-    }
-
-    const order = getUPIOrder(orderId);
-    if (!order) {
-      return res.status(404).json({ error: 'Order not found' });
-    }
-
-    // Must match submitted UTR or attach it
-    if (!order.customerUtr) {
-      order.customerUtr = utr;
-    }
-
-    const result = verifyUPIOrder(orderId, 'Bank Webhook Reconciliation');
-    if (!result.success || !result.order) {
-      return res.status(400).json({ error: result.error });
-    }
-
-    const targetUser = users.find(u => u.id === result.order!.userId);
-    if (targetUser) {
-      targetUser.subscriptionPlan = 'PRO';
-      targetUser.subscriptionStatus = 'active';
-    }
-
-    recordAuditLog({
-      event: 'UPI_BANK_WEBHOOK_VERIFIED',
-      status: 'SUCCESS',
-      details: { orderId, utr, amount: result.order.amount }
-    });
-
-    res.json({ success: true, message: 'Bank reconciliation confirmed order', order: result.order });
-  });
-
   // ===========================================================
   // 9. OWNER CONTROLS & AUDIT OBSERVABILITY
   // ===========================================================
@@ -2867,8 +996,8 @@ Return JSON in this EXACT schema:
 
     res.json({
       totalUsers: users.length,
-      activeAgents: agents.filter(a => a.status === 'working').length,
-      totalTasks: tasks.length,
+      activeAgents: 0,
+      totalTasks: 0,
       totalWebsites: websites.length,
       dailyProjectLimit: 5,
       dailyProjectsCreatedToday: quota.projectsCreatedToday,
@@ -2894,8 +1023,6 @@ Return JSON in this EXACT schema:
       return res.status(404).json({ error: 'User not found' });
     }
     if (role) targetUser.role = role;
-    if (plan) targetUser.subscriptionPlan = plan;
-    if (status) targetUser.subscriptionStatus = status;
     res.json({ success: true, user: targetUser });
   });
 
@@ -2903,15 +1030,7 @@ Return JSON in this EXACT schema:
   // 10. SERVICE INTEGRATIONS & CONNECTIVITY (Zero Payment Gateways)
   // ===========================================================
   const integrationsList = [
-    {
-      id: 'upi',
-      name: 'Direct UPI Payment',
-      icon: 'QrCode',
-      status: 'connected',
-      description: 'Zero-gateway direct payments to 9818691915@pytes via UPI deep links and QR codes with UTR verification.',
-      details: 'Active. UPI_ID=9818691915@pytes configured on server.'
-    },
-    {
+{
       id: 'github',
       name: 'GitHub Repository Sync',
       icon: 'GitBranch',
@@ -3193,82 +1312,282 @@ Return JSON in this EXACT schema:
   // Real Execution Engine API for tool execution with idempotency
   app.post('/api/tools/execute', async (req: Request, res: Response) => {
     const user = getRequestUser(req);
-    const { tool, params, idempotencyKey } = req.body;
+    const { tool, params, idempotencyKey } = req.body || {};
 
-    if (!tool) return res.status(400).json({ error: 'Tool name is required' });
-
-    if (idempotencyKey) {
-      const existingTask = AuraDB.getTaskByIdempotencyKey(idempotencyKey);
-      if (existingTask) {
-        return res.json({
-          idempotent: true,
-          task: existingTask,
-          message: 'Returning existing task execution for idempotency key.'
-        });
-      }
+    if (!tool) {
+      return res.status(400).json({ error: 'Tool name is required' });
     }
 
     const startTime = Date.now();
+
+    /*
+     * Validate the tool before acquiring an idempotency record.
+     * Invalid requests must never reserve an idempotency key.
+     */
+    const supportedTools = new Set([
+      'filesystem.writeFile',
+      'filesystem.readFile',
+      'filesystem.editFile',
+      'filesystem.listFiles',
+      'terminal.executeCommand',
+      'web.inspect',
+      'qa.verifyWebsite'
+    ]);
+
+    if (!supportedTools.has(tool)) {
+      return res.status(404).json({
+        error: `Unknown tool: ${tool}`
+      });
+    }
+
+    let idempotencyAcquired = false;
+
     try {
+      /*
+       * Dedicated tool idempotency.
+       *
+       * acquireToolIdempotency() is the atomic claim.
+       * This prevents:
+       *   request A -> check
+       *   request B -> check
+       *   both execute
+       *
+       * Only the request that successfully acquires the key executes.
+       */
+      if (idempotencyKey) {
+        const claim = AuraDB.acquireToolIdempotency(
+          String(idempotencyKey),
+          user.id,
+          tool
+        );
+
+        if (!claim.acquired && claim.response !== undefined) {
+          return res.json({
+            idempotent: true,
+            cached: true,
+            result: claim.response,
+            durationMs: Date.now() - startTime
+          });
+        }
+
+        if (!claim.acquired && claim.processing) {
+          return res.status(409).json({
+            success: false,
+            idempotent: true,
+            status: 'ALREADY_PROCESSING',
+            message: 'This tool execution is already in progress.'
+          });
+        }
+
+        if (
+          !claim.acquired &&
+          claim.error === 'IDEMPOTENCY_KEY_OWNERSHIP_MISMATCH'
+        ) {
+          return res.status(409).json({
+            success: false,
+            idempotent: true,
+            status: 'IDEMPOTENCY_KEY_CONFLICT',
+            message: 'The idempotency key cannot be reused by this user.'
+          });
+        }
+
+        if (!claim.acquired) {
+          return res.status(409).json({
+            success: false,
+            idempotent: true,
+            status: 'IDEMPOTENCY_CONFLICT',
+            message: 'Unable to acquire the idempotency key.'
+          });
+        }
+
+        idempotencyAcquired = true;
+      }
+
+      let result: any;
+
       switch (tool) {
         case 'filesystem.writeFile': {
           const { projectId, path: relPath, content } = params || {};
+
           if (!projectId || !relPath || content === undefined) {
-            return res.status(400).json({ error: 'projectId, path, and content are required' });
+            return res.status(400).json({
+              error: 'projectId, path, and content are required'
+            });
           }
-          const resExec = await RealExecutor.writeFile(user.id, projectId, relPath, content);
-          return res.json(resExec);
+
+          result = await RealExecutor.writeFile(
+            user.id,
+            projectId,
+            relPath,
+            content
+          );
+          break;
         }
 
         case 'filesystem.readFile': {
           const { projectId, path: relPath } = params || {};
-          if (!projectId || !relPath) return res.status(400).json({ error: 'projectId and path are required' });
-          const resExec = await RealExecutor.readFile(user.id, projectId, relPath);
-          return res.json(resExec);
+
+          if (!projectId || !relPath) {
+            return res.status(400).json({
+              error: 'projectId and path are required'
+            });
+          }
+
+          result = await RealExecutor.readFile(
+            user.id,
+            projectId,
+            relPath
+          );
+          break;
         }
 
         case 'filesystem.editFile': {
-          const { projectId, path: relPath, targetStr, replacementStr } = params || {};
-          if (!projectId || !relPath || !targetStr || replacementStr === undefined) {
-            return res.status(400).json({ error: 'projectId, path, targetStr, and replacementStr are required' });
+          const {
+            projectId,
+            path: relPath,
+            targetStr,
+            replacementStr
+          } = params || {};
+
+          if (
+            !projectId ||
+            !relPath ||
+            !targetStr ||
+            replacementStr === undefined
+          ) {
+            return res.status(400).json({
+              error:
+                'projectId, path, targetStr, and replacementStr are required'
+            });
           }
-          const resExec = await RealExecutor.editFile(user.id, projectId, relPath, targetStr, replacementStr);
-          return res.json(resExec);
+
+          result = await RealExecutor.editFile(
+            user.id,
+            projectId,
+            relPath,
+            targetStr,
+            replacementStr
+          );
+          break;
         }
 
         case 'filesystem.listFiles': {
           const { projectId } = params || {};
-          if (!projectId) return res.status(400).json({ error: 'projectId is required' });
-          const resExec = await RealExecutor.listFiles(user.id, projectId);
-          return res.json(resExec);
+
+          if (!projectId) {
+            return res.status(400).json({
+              error: 'projectId is required'
+            });
+          }
+
+          result = await RealExecutor.listFiles(
+            user.id,
+            projectId
+          );
+          break;
         }
 
         case 'terminal.executeCommand': {
           const { command, cwd, timeoutMs } = params || {};
-          if (!command) return res.status(400).json({ error: 'command is required' });
-          const resExec = await RealExecutor.executeCommand(user.id, command, cwd, timeoutMs);
-          return res.json(resExec);
+
+          if (!command) {
+            return res.status(400).json({
+              error: 'command is required'
+            });
+          }
+
+          result = await RealExecutor.executeCommand(
+            user.id,
+            command,
+            cwd,
+            timeoutMs
+          );
+          break;
         }
 
         case 'web.inspect': {
           const { url } = params || {};
-          if (!url) return res.status(400).json({ error: 'url is required' });
-          const resExec = await RealExecutor.inspectWebResource(user.id, url);
-          return res.json(resExec);
+
+          if (!url) {
+            return res.status(400).json({
+              error: 'url is required'
+            });
+          }
+
+          result = await RealExecutor.inspectWebResource(
+            user.id,
+            url
+          );
+          break;
         }
 
         case 'qa.verifyWebsite': {
           const { files } = params || {};
-          if (!Array.isArray(files)) return res.status(400).json({ error: 'files array is required' });
-          const report = RealExecutor.verifyWebsiteProject(files);
-          return res.json({ success: report.ok, report, durationMs: Date.now() - startTime });
-        }
 
-        default:
-          return res.status(404).json({ error: `Unknown tool: ${tool}` });
+          if (!Array.isArray(files)) {
+            return res.status(400).json({
+              error: 'files array is required'
+            });
+          }
+
+          const report = RealExecutor.verifyWebsiteProject(files);
+
+          result = {
+            success: report.ok,
+            report,
+            durationMs: Date.now() - startTime
+          };
+          break;
+        }
       }
+
+      /*
+       * Persist the exact successful response only after the
+       * real executor has completed.
+       */
+      if (idempotencyKey && idempotencyAcquired) {
+        AuraDB.completeToolIdempotency(
+          String(idempotencyKey),
+          user.id,
+          result
+        );
+      }
+
+      return res.json(result);
+
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message, durationMs: Date.now() - startTime });
+      const errorMessage =
+        err instanceof Error ? err.message : String(err);
+
+      /*
+       * Mark the claimed operation FAILED so a later retry can
+       * distinguish it from an operation that is still running.
+       */
+      if (idempotencyKey && idempotencyAcquired) {
+        try {
+          AuraDB.failToolIdempotency(
+            String(idempotencyKey),
+            user.id,
+            errorMessage,
+            {
+              success: false,
+              error: errorMessage,
+              durationMs: Date.now() - startTime
+            }
+          );
+        } catch (idempotencyError) {
+          console.error(
+            'Tool idempotency failure persistence error:',
+            idempotencyError
+          );
+        }
+      }
+
+      return res.status(500).json({
+        success: false,
+        error: errorMessage,
+        durationMs: Date.now() - startTime
+      });
     }
   });
 

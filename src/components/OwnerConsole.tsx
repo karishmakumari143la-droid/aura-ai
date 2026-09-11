@@ -180,8 +180,6 @@ export const OwnerConsole: React.FC<OwnerConsoleProps> = ({
                       {u.role}
                     </span>
                   </td>
-                  <td className="py-3">{u.subscriptionPlan}</td>
-                  <td className="py-3 text-emerald-400">{u.subscriptionStatus}</td>
                   <td className="py-3 text-slate-500 text-[11px]">{new Date(u.createdAt).toLocaleDateString()}</td>
                 </tr>
               ))}

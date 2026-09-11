@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import path from 'path';
 import fs from 'fs';
-import { User, MemoryItem, Task, VirtualAgent, ProjectQuotaStatus, WebsiteProject } from '../../types';
+import { User, MemoryItem, ProjectQuotaStatus, WebsiteProject } from '../../types';
 
 const DATA_DIR = path.join(process.cwd(), 'data');
 if (!fs.existsSync(DATA_DIR)) {
@@ -22,8 +22,6 @@ db.exec(`
     email TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
     role TEXT NOT NULL,
-    subscription_plan TEXT NOT NULL DEFAULT 'FREE',
-    subscription_status TEXT NOT NULL DEFAULT 'active',
     created_at TEXT NOT NULL,
     is_owner INTEGER NOT NULL DEFAULT 0
   );
@@ -92,6 +90,18 @@ db.exec(`
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
   );
 
+  CREATE TABLE IF NOT EXISTS tool_idempotency (
+    idempotency_key TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    tool TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PROCESSING',
+    response_json TEXT,
+    error TEXT,
+    created_at TEXT NOT NULL,
+    completed_at TEXT,
+    updated_at TEXT NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS memories (
     memory_id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
@@ -146,6 +156,10 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
   CREATE INDEX IF NOT EXISTS idx_tasks_user ON tasks(user_id);
   CREATE INDEX IF NOT EXISTS idx_tasks_idempotency ON tasks(idempotency_key);
+  CREATE INDEX IF NOT EXISTS idx_tool_idempotency_user
+    ON tool_idempotency(user_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_tool_idempotency_status
+    ON tool_idempotency(status, created_at);
   CREATE INDEX IF NOT EXISTS idx_memories_user ON memories(user_id);
   CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id);
 `);
@@ -187,8 +201,6 @@ export class AuraDB {
       email: row.email,
       name: row.name,
       role: row.role,
-      subscriptionPlan: row.subscription_plan,
-      subscriptionStatus: row.subscription_status,
       createdAt: row.created_at,
       isOwner: Boolean(row.is_owner)
     };
@@ -203,8 +215,6 @@ export class AuraDB {
       email: row.email,
       name: row.name,
       role: row.role,
-      subscriptionPlan: row.subscription_plan,
-      subscriptionStatus: row.subscription_status,
       createdAt: row.created_at,
       isOwner: Boolean(row.is_owner)
     };
@@ -217,8 +227,6 @@ export class AuraDB {
       email: row.email,
       name: row.name,
       role: row.role,
-      subscriptionPlan: row.subscription_plan,
-      subscriptionStatus: row.subscription_status,
       createdAt: row.created_at,
       isOwner: Boolean(row.is_owner)
     }));
@@ -226,29 +234,21 @@ export class AuraDB {
 
   static upsertUser(user: User): void {
     db.prepare(`
-      INSERT INTO users (id, email, name, role, subscription_plan, subscription_status, created_at, is_owner)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO users (id, email, name, role, created_at, is_owner)
+      VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         email = excluded.email,
         name = excluded.name,
         role = excluded.role,
-        subscription_plan = excluded.subscription_plan,
-        subscription_status = excluded.subscription_status,
         is_owner = excluded.is_owner
     `).run(
       user.id,
       user.email.toLowerCase().trim(),
       user.name,
       user.role,
-      user.subscriptionPlan || 'FREE',
-      user.subscriptionStatus || 'active',
       user.createdAt || new Date().toISOString(),
       user.isOwner ? 1 : 0
     );
-  }
-
-  static updateUserPlan(userId: string, plan: 'FREE' | 'STARTER' | 'PRO' | 'ENTERPRISE', status = 'active'): void {
-    db.prepare('UPDATE users SET subscription_plan = ?, subscription_status = ? WHERE id = ?').run(plan, status, userId);
   }
 
   static setCredential(userId: string, passwordHash: string): void {
@@ -298,8 +298,6 @@ export class AuraDB {
       email: row.email,
       name: row.name,
       role: row.role,
-      subscriptionPlan: row.subscription_plan,
-      subscriptionStatus: row.subscription_status,
       createdAt: row.created_at,
       isOwner: Boolean(row.is_owner)
     };
@@ -436,29 +434,40 @@ export class AuraDB {
 
   static getProjectQuotaStatus(user: User): ProjectQuotaStatus {
     const isOwner = user.role === 'OWNER';
-    const plan = user.subscriptionPlan || 'FREE';
-    const usedToday = AuraDB.countNewProjectsCreatedToday(user.id);
-    const date = new Date().toISOString().slice(0, 10);
-    const resetAt = 'Midnight (00:00 UTC)';
+    const now = new Date();
+    const date = now.toISOString().slice(0, 10);
+    const resetAt = new Date(
+      Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate() + 1,
+        0,
+        0,
+        0
+      )
+    ).toISOString();
 
-    if (isOwner || plan === 'ENTERPRISE') {
+    const usedToday = AuraDB.countNewProjectsCreatedToday(user.id);
+
+    if (isOwner) {
       return {
         userId: user.id,
         date,
         isOwner: true,
-        limit: 9999,
+        limit: 5,
         used: usedToday,
-        remaining: 9999 - usedToday,
+        remaining: 5,
         resetAt,
         projectsCreatedToday: usedToday,
         totalProjects: AuraDB.getUserProjects(user.id).length,
         allowed: true,
-        message: 'Owner privilege: Unlimited projects'
+        message: 'Owner access: unlimited project creations.'
       };
     }
 
     const freeLimit = 5;
     const remaining = Math.max(0, freeLimit - usedToday);
+
     return {
       userId: user.id,
       date,
@@ -470,114 +479,235 @@ export class AuraDB {
       projectsCreatedToday: usedToday,
       totalProjects: AuraDB.getUserProjects(user.id).length,
       allowed: remaining > 0,
-      message: remaining > 0 ? `${remaining} project creations remaining today.` : "Today's 5-project limit reached."
+      message:
+        remaining > 0
+          ? `${remaining} project creations remaining today.`
+          : "Today's 5-project limit reached."
     };
   }
 
-  // ==================== TASKS & IDEMPOTENCY ====================
-  static saveTask(task: Task, idempotencyKey?: string): void {
+  // ==================== TOOL IDEMPOTENCY ====================
+
+  /**
+   * Atomically claim a tool execution.
+   *
+   * Returns:
+   *   { acquired: true } for the request that owns execution.
+   *   { acquired: false, response } when a completed result exists.
+   *   { acquired: false, processing: true } when another request owns it.
+   *
+   * The idempotency key is scoped to the authenticated user.
+   */
+  static acquireToolIdempotency(
+    key: string,
+    userId: string,
+    tool: string,
+    ttlSeconds = 300
+  ): {
+    acquired: boolean;
+    processing?: boolean;
+    response?: any;
+    error?: string;
+  } {
+    if (!key || !userId || !tool) {
+      return { acquired: true };
+    }
+
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const cutoff = new Date(now.getTime() - ttlSeconds * 1000).toISOString();
+
+    db.exec('BEGIN IMMEDIATE');
+
+    try {
+      const existing = db.prepare(`
+        SELECT idempotency_key, user_id, tool, status,
+               response_json, error, created_at
+        FROM tool_idempotency
+        WHERE idempotency_key = ?
+      `).get(key) as any;
+
+      if (existing) {
+        // Never return or reuse another user's execution.
+        if (existing.user_id !== userId) {
+          db.exec('COMMIT');
+          return {
+            acquired: false,
+            error: 'IDEMPOTENCY_KEY_OWNERSHIP_MISMATCH'
+          };
+        }
+
+        if (existing.status === 'COMPLETED' && existing.response_json) {
+          let response: any = null;
+
+          try {
+            response = JSON.parse(existing.response_json);
+          } catch {
+            response = {
+              success: false,
+              error: 'Stored idempotency response is invalid JSON.'
+            };
+          }
+
+          db.exec('COMMIT');
+          return {
+            acquired: false,
+            response
+          };
+        }
+
+        if (
+          existing.status === 'PROCESSING' &&
+          existing.created_at > cutoff
+        ) {
+          db.exec('COMMIT');
+          return {
+            acquired: false,
+            processing: true
+          };
+        }
+
+        // Expired PROCESSING/FAILED record can be reclaimed.
+        db.prepare(`
+          UPDATE tool_idempotency
+          SET user_id = ?,
+              tool = ?,
+              status = 'PROCESSING',
+              response_json = NULL,
+              error = NULL,
+              created_at = ?,
+              completed_at = NULL,
+              updated_at = ?
+          WHERE idempotency_key = ?
+            AND user_id = ?
+        `).run(
+          userId,
+          tool,
+          nowIso,
+          nowIso,
+          key,
+          userId
+        );
+
+        return { acquired: true };
+      }
+
+      db.prepare(`
+        INSERT INTO tool_idempotency (
+          idempotency_key,
+          user_id,
+          tool,
+          status,
+          response_json,
+          error,
+          created_at,
+          completed_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, 'PROCESSING', NULL, NULL, ?, NULL, ?)
+      `).run(
+        key,
+        userId,
+        tool,
+        nowIso,
+        nowIso
+      );
+
+      db.exec('COMMIT');
+      return { acquired: true };
+    } catch (error) {
+      try {
+        db.exec('ROLLBACK');
+      } catch {
+        // Preserve the original database error.
+      }
+      throw error;
+    }
+  }
+
+  static completeToolIdempotency(
+    key: string,
+    userId: string,
+    response: any
+  ): void {
+    if (!key || !userId) return;
+
     const now = new Date().toISOString();
+
     db.prepare(`
-      INSERT INTO tasks (task_id, user_id, project_id, title, description, status, priority, nodes_json, edges_json, messages_json, logs_json, error, result, verification, idempotency_key, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(task_id) DO UPDATE SET
-        status = excluded.status,
-        nodes_json = excluded.nodes_json,
-        edges_json = excluded.edges_json,
-        messages_json = excluded.messages_json,
-        logs_json = excluded.logs_json,
-        error = excluded.error,
-        result = excluded.result,
-        verification = excluded.verification,
-        updated_at = excluded.updated_at
+      UPDATE tool_idempotency
+      SET status = 'COMPLETED',
+          response_json = ?,
+          error = NULL,
+          completed_at = ?,
+          updated_at = ?
+      WHERE idempotency_key = ?
+        AND user_id = ?
     `).run(
-      task.taskId,
-      task.userId,
-      task.projectId || null,
-      task.title,
-      task.description,
-      task.status,
-      task.priority || 'normal',
-      JSON.stringify(task.nodes || []),
-      JSON.stringify(task.edges || []),
-      JSON.stringify(task.messages || []),
-      JSON.stringify(task.logs || []),
-      task.error || null,
-      task.result || null,
-      task.verification || null,
-      idempotencyKey || null,
-      task.createdAt || now,
-      task.updatedAt || now
+      JSON.stringify(response),
+      now,
+      now,
+      key,
+      userId
     );
   }
 
-  static upsertTask(task: Task, idempotencyKey?: string): void {
-    AuraDB.saveTask(task, idempotencyKey);
+  static failToolIdempotency(
+    key: string,
+    userId: string,
+    error: string,
+    response?: any
+  ): void {
+    if (!key || !userId) return;
+
+    const now = new Date().toISOString();
+
+    db.prepare(`
+      UPDATE tool_idempotency
+      SET status = 'FAILED',
+          response_json = ?,
+          error = ?,
+          completed_at = ?,
+          updated_at = ?
+      WHERE idempotency_key = ?
+        AND user_id = ?
+    `).run(
+      response === undefined ? null : JSON.stringify(response),
+      error || 'Tool execution failed',
+      now,
+      now,
+      key,
+      userId
+    );
   }
 
-  static setTaskCommandIndex(_commandKey: string, _taskId: string): void {
-    // Indexed in cache and queryable via task_id and command_id
-  }
+  static getToolIdempotency(
+    key: string,
+    userId: string
+  ): any | null {
+    if (!key || !userId) return null;
 
-  static upsertProject(project: WebsiteProject | ProjectRecord): void {
-    const pRecord: ProjectRecord = {
-      id: project.id,
-      userId: (project as any).userId || 'usr-owner',
-      name: project.name,
-      businessType: (project as any).category || (project as any).businessType || 'general',
-      status: (project as any).status || 'ready',
-      files: (project as any).files || [],
-      verification: (project as any).verification || null,
-      createdAt: project.createdAt || new Date().toISOString(),
-      updatedAt: project.updatedAt || new Date().toISOString()
-    };
-    AuraDB.saveProject(pRecord);
-  }
+    const row = db.prepare(`
+      SELECT *
+      FROM tool_idempotency
+      WHERE idempotency_key = ?
+        AND user_id = ?
+    `).get(key, userId) as any;
 
-  static getTask(taskId: string): Task | null {
-    const row = db.prepare('SELECT * FROM tasks WHERE task_id = ?').get(taskId) as any;
     if (!row) return null;
-    return {
-      taskId: row.task_id,
-      userId: row.user_id,
-      projectId: row.project_id,
-      title: row.title,
-      description: row.description,
-      status: row.status,
-      priority: row.priority,
-      nodes: JSON.parse(row.nodes_json || '[]'),
-      edges: JSON.parse(row.edges_json || '[]'),
-      messages: JSON.parse(row.messages_json || '[]'),
-      logs: JSON.parse(row.logs_json || '[]'),
-      error: row.error,
-      result: row.result,
-      verification: row.verification,
-      createdAt: row.created_at || new Date().toISOString(),
-      updatedAt: row.updated_at || new Date().toISOString()
-    };
-  }
 
-  static getTaskByIdempotencyKey(key: string): Task | null {
-    if (!key) return null;
-    const row = db.prepare('SELECT * FROM tasks WHERE idempotency_key = ?').get(key) as any;
-    if (!row) return null;
     return {
-      taskId: row.task_id,
+      idempotencyKey: row.idempotency_key,
       userId: row.user_id,
-      projectId: row.project_id,
-      title: row.title,
-      description: row.description,
+      tool: row.tool,
       status: row.status,
-      priority: row.priority,
-      nodes: JSON.parse(row.nodes_json || '[]'),
-      edges: JSON.parse(row.edges_json || '[]'),
-      messages: JSON.parse(row.messages_json || '[]'),
-      logs: JSON.parse(row.logs_json || '[]'),
+      response: row.response_json
+        ? JSON.parse(row.response_json)
+        : null,
       error: row.error,
-      result: row.result,
-      verification: row.verification,
-      createdAt: row.created_at || new Date().toISOString(),
-      updatedAt: row.updated_at || new Date().toISOString()
+      createdAt: row.created_at,
+      completedAt: row.completed_at,
+      updatedAt: row.updated_at
     };
   }
 

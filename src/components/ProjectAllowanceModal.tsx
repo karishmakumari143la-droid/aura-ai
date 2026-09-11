@@ -114,7 +114,7 @@ export const ProjectAllowanceModal: React.FC<ProjectAllowanceModalProps> = ({
                     <span>Unlimited Project Generation Unlocked</span>
                   </div>
                   <p className="text-xs text-slate-300 leading-relaxed">
-                    As an authenticated Owner, you are exempt from daily limits. You have unlimited project synthesis, DAG tasks, and specialist agent bandwidth.
+                    As an authenticated Owner, you are exempt from daily limits. You have unlimited edits, design changes, and automation workflows inside existing projects.
                   </p>
                 </div>
               ) : isLimitReached ? (
@@ -218,15 +218,7 @@ export const ProjectAllowanceModal: React.FC<ProjectAllowanceModalProps> = ({
                 )}
               </div>
               <div className="flex items-center gap-2 flex-wrap">
-                {onSimulateLimit && (
-                  <button
-                    type="button"
-                    onClick={onSimulateLimit}
-                    className="px-2.5 py-1 rounded-lg bg-amber-950/60 border border-amber-800/60 text-amber-300 hover:bg-amber-900/80 text-[11px] font-mono transition"
-                  >
-                    [Simulate 5/5 Limit Reached]
-                  </button>
-                )}
+                
                 {onResetQuota && (
                   <button
                     type="button"

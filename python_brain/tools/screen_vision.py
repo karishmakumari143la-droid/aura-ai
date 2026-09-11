@@ -1,7 +1,7 @@
 """
 AURA AI — Real Screen Capture & Vision Analysis Engine
 Pipeline:
-SCREEN CAPTURE → IMAGE BYTES → VISION MODEL → SCREEN UNDERSTANDING → STRUCTURED RESULT
+SCREEN CAPTURE → IMAGE BYTES → LOCAL SCREEN GROUNDING → STRUCTURED RESULT
 
 Strictly authentic execution:
 - Never invents imaginary UI elements
@@ -11,8 +11,6 @@ Strictly authentic execution:
 
 import os
 import io
-import re
-import json
 import base64
 import time
 from typing import Dict, Any, Optional, List, Tuple
@@ -34,8 +32,6 @@ class ScreenVisionTool:
         except ImportError:
             pass
 
-        has_gemini = bool(os.environ.get("GEMINI_API_KEY"))
-
         if browser_diag.get("status") == "WORKING" and has_pillow:
             status = "WORKING"
         elif browser_diag.get("status") == "PARTIALLY_WORKING" or has_pillow:
@@ -48,7 +44,7 @@ class ScreenVisionTool:
             "status": status,
             "browser_status": browser_diag.get("status"),
             "pillow_available": has_pillow,
-            "gemini_api_configured": has_gemini
+            "external_vision_provider": False
         }
 
     @classmethod
@@ -233,56 +229,10 @@ class ScreenVisionTool:
                 "error": f"Could not decode image bytes: {str(e)}"
             }
 
-        # 3. ATTEMPT LIVE GEMINI VISION (if key is configured and not in quota cooldown)
-        api_key = os.environ.get("GEMINI_API_KEY")
-        from ..reasoning import LLMReasoning
-
-        if api_key and LLMReasoning._SHARED_QUOTA_EXHAUSTED_UNTIL < time.time():
-            try:
-                from google import genai
-                from google.genai import types
-                client = genai.Client(api_key=api_key)
-
-                vision_prompt = (
-                    "Analyze the provided screenshot. Output ONLY valid JSON matching this exact schema:\n"
-                    "{\n"
-                    '  "screen": "<description of the active window, page, or layout>",\n'
-                    '  "elements": [\n'
-                    '    {\n'
-                    '      "type": "button | input | link | text | image | window | card",\n'
-                    '      "text": "<visible label or placeholder>",\n'
-                    '      "bbox": [x, y, width, height]\n'
-                    '    }\n'
-                    '  ],\n'
-                    '  "confidence": <float between 0.0 and 1.0>\n'
-                    "}\n"
-                    f"User prompt: {user_prompt}"
-                )
-
-                response = client.models.generate_content(
-                    model="gemini-3.6-flash",
-                    contents=[
-                        types.Part.from_bytes(data=img_bytes, mime_type="image/png"),
-                        vision_prompt
-                    ]
-                )
-
-                if response and response.text:
-                    cleaned = response.text.strip()
-                    if cleaned.startswith("```"):
-                        lines = cleaned.split("\n")
-                        cleaned = "\n".join(lines[1:-1]) if len(lines) > 2 else cleaned
-                    parsed = json.loads(cleaned)
-                    if "screen" in parsed and "elements" in parsed:
-                        parsed["success"] = True
-                        parsed["mode"] = "GEMINI_VISION"
-                        parsed["image_metadata"] = {"width": width, "height": height, "format": img_format}
-                        parsed["duration_ms"] = int((time.time() - start) * 1000)
-                        return parsed
-            except Exception as e:
-                err_msg = str(e).lower()
-                if "429" in err_msg or "quota" in err_msg:
-                    LLMReasoning._SHARED_QUOTA_EXHAUSTED_UNTIL = time.time() + 60
+        # 3. LOCAL/TRUTHFUL SCREEN GROUNDING
+        # No external vision provider is used.
+        # UI elements are grounded only in real Playwright DOM data
+        # supplied through cached_interactive_elements.
 
         # 4. TRUTHFUL STRUCTURED GROUNDING
         # Ground elements using actual rendered DOM coordinates from Playwright
@@ -308,7 +258,7 @@ class ScreenVisionTool:
             "screen": screen_desc,
             "elements": elements_list,
             "confidence": 0.90 if elements_list else 0.80,
-            "mode": "GROUNDED_VISION_INSPECTION",
+            "mode": "LOCAL_GROUNDED_INSPECTION",
             "image_metadata": {"width": width, "height": height, "format": img_format},
             "duration_ms": int((time.time() - start) * 1000)
         }
@@ -323,7 +273,7 @@ class ScreenVisionTool:
     ) -> Dict[str, Any]:
         """
         Complete pipeline:
-        SCREEN CAPTURE → IMAGE BYTES → VISION MODEL → SCREEN UNDERSTANDING → STRUCTURED RESULT
+        SCREEN CAPTURE → IMAGE BYTES → LOCAL SCREEN GROUNDING → STRUCTURED RESULT
         """
         capture_res = ScreenVisionTool.capture_screen(
             target=target,

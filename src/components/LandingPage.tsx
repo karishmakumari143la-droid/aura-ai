@@ -44,7 +44,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
   const samplePrompts = [
     'Create a modern gym website with pricing and WhatsApp VIP booking',
-    'Orchestrate parallel UI design and code synthesis for a SaaS app',
+    'Build and improve a SaaS app with AURA',
     'Automate lead capture workflow via n8n webhooks',
     'Review desktop companion computer permissions sandbox'
   ];
@@ -61,7 +61,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   const faqs = [
     {
       q: 'How does AURA AI differ from standard conversational chatbots?',
-      a: 'AURA is a living AI partner powered by a parallel multi-agent cognitive architecture. Instead of returning plain text, AURA plans an execution DAG, assigning tasks simultaneously to specialized agents (PIXEL for UI design, CODE for full-stack engineering, SCOUT for deep research, and QA for security validation) while rendering live progress.'
+      a: 'AURA is a living AI partner built around a single intelligent core. It understands your request, decides what capabilities are needed, performs authorized work, verifies the result, and tells you what actually happened.'
     },
     {
       q: 'How does the AURA AI access model work?',
@@ -69,7 +69,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
     },
     {
       q: 'Are there any subscriptions, paid credits, or credit card requirements?',
-      a: 'No. There are zero payment gateways, subscriptions, or credit card forms. All users enjoy free access to the living neural interface, autonomous website builder, memory engine, and parallel specialist workforce.'
+      a: 'No. There are zero payment gateways, subscriptions, or credit card forms. All users enjoy free access to the living neural interface, autonomous website builder, memory engine, and intelligent workspace.'
     },
     {
       q: 'When does the daily project counter reset?',
@@ -102,7 +102,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           <a href="#demo" className="hover:text-cyan-400 transition">Demonstration</a>
           <a href="#capabilities" className="hover:text-cyan-400 transition">Capabilities</a>
           <a href="#how-it-works" className="hover:text-cyan-400 transition">How It Works</a>
-          <a href="#workforce" className="hover:text-cyan-400 transition">AI Workforce</a>
+          <a href="#capabilities-map" className="hover:text-cyan-400 transition">AURA Capabilities</a>
           <a href="#access-model" className="hover:text-cyan-400 transition">Access Model</a>
           {onLogin && (
             <button onClick={onLogin} className="hover:text-cyan-400 transition">Sign In</button>
@@ -212,7 +212,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               An AI Partner, Not Just Another Chatbot
             </h2>
             <p className="mt-2 text-sm text-slate-400">
-              Engineered with real state reactivity, living particle physics, and autonomous parallel agent delegation.
+              Engineered with real state reactivity, living particle physics, and autonomous task execution.
             </p>
           </div>
 
@@ -231,9 +231,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               <div className="w-10 h-10 rounded-xl bg-purple-500/10 border border-purple-500/30 flex items-center justify-center text-purple-400 mb-4">
                 <Cpu className="w-5 h-5" />
               </div>
-              <h3 className="text-lg font-bold text-white">Parallel Task DAG</h3>
+              <h3 className="text-lg font-bold text-white">AURA Execution Flow</h3>
               <p className="mt-2 text-xs leading-relaxed text-slate-400">
-                Complex prompts decompose into topological execution levels. Level 0 research and UI design run simultaneously before engineering begins.
+                AURA understands your request, decides what needs to happen, uses the required capabilities, and verifies the result before reporting back.
               </p>
             </div>
 
@@ -250,36 +250,80 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         </div>
       </section>
 
-      {/* 4. AI Workforce Section */}
-      <section id="workforce" className="py-20 px-6 border-t border-white/5">
+      {/* 4. AURA Capabilities Section */}
+      <section id="capabilities-map" className="py-20 px-6 border-t border-white/5">
         <div className="max-w-6xl mx-auto">
           <div className="text-center max-w-2xl mx-auto">
             <h2 className="text-2xl sm:text-3xl font-bold text-white tracking-tight">
-              AURA Specialist Workforce
+              One AURA. Many Capabilities.
             </h2>
             <p className="mt-2 text-sm text-slate-400">
-              Each unit performs specialized tasks with verified tool clearances.
+              AURA is one intelligent system that uses the capabilities required for the work you ask it to do.
             </p>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mt-12">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-12">
             {[
-              { code: 'AU', name: 'AURA', role: 'Cognitive Orchestrator', desc: 'Semantic understanding and DAG task planning.', color: 'border-cyan-500/40' },
-              { code: 'PX', name: 'PIXEL', role: 'Visual UI/UX Design', desc: 'Design systems, themes, and spatial wireframes.', color: 'border-pink-500/40' },
-              { code: 'CD', name: 'CODE', role: 'Full-Stack Engineer', desc: 'TypeScript code, APIs, and state machine handlers.', color: 'border-blue-500/40' },
-              { code: 'SC', name: 'SCOUT', role: 'Deep Researcher', desc: 'Market intelligence, competitor data, and SEO/AEO.', color: 'border-amber-500/40' },
-              { code: 'QA', name: 'QA', role: 'Quality & Security', desc: 'WCAG scans, syntax validation, and compliance tests.', color: 'border-emerald-500/40' }
-            ].map((worker) => (
+              {
+                code: 'KN',
+                name: 'Knowledge',
+                desc: 'Understand questions, concepts, and context.',
+                color: 'border-cyan-500/40'
+              },
+              {
+                code: 'RS',
+                name: 'Research',
+                desc: 'Gather and analyze information when needed.',
+                color: 'border-amber-500/40'
+              },
+              {
+                code: 'CD',
+                name: 'Code',
+                desc: 'Create, inspect, modify, and test software.',
+                color: 'border-blue-500/40'
+              },
+              {
+                code: 'WB',
+                name: 'Web',
+                desc: 'Use authorized browser capabilities.',
+                color: 'border-sky-500/40'
+              },
+              {
+                code: 'FL',
+                name: 'Files',
+                desc: 'Read, create, edit, and organize authorized files.',
+                color: 'border-violet-500/40'
+              },
+              {
+                code: 'AU',
+                name: 'Automation',
+                desc: 'Connect approved tools and automate workflows.',
+                color: 'border-emerald-500/40'
+              },
+              {
+                code: 'SC',
+                name: 'Screen',
+                desc: 'Understand the authorized screen when enabled.',
+                color: 'border-pink-500/40'
+              },
+              {
+                code: 'VR',
+                name: 'Verification',
+                desc: 'Check work and report verified results.',
+                color: 'border-teal-500/40'
+              }
+            ].map((capability) => (
               <div
-                key={worker.code}
-                className={`p-5 rounded-2xl bg-slate-950 border ${worker.color} flex flex-col items-center text-center`}
+                key={capability.code}
+                className={`p-5 rounded-2xl bg-slate-950 border ${capability.color} flex flex-col items-center text-center`}
               >
                 <div className="w-10 h-10 rounded-xl bg-slate-900 flex items-center justify-center font-mono font-bold text-cyan-300 text-sm mb-3">
-                  {worker.code}
+                  {capability.code}
                 </div>
-                <h4 className="font-bold text-sm text-white">{worker.name}</h4>
-                <span className="text-[11px] font-mono text-slate-400 mb-2">{worker.role}</span>
-                <p className="text-xs text-slate-400 leading-relaxed">{worker.desc}</p>
+                <h4 className="font-bold text-sm text-white">{capability.name}</h4>
+                <p className="mt-2 text-xs text-slate-400 leading-relaxed">
+                  {capability.desc}
+                </p>
               </div>
             ))}
           </div>
@@ -328,7 +372,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               </li>
               <li className="flex items-center gap-2">
                 <Check className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span><strong>Multi-agent execution</strong> with task planning and verification</span>
+                <span><strong>Intelligent execution</strong> with task planning and verification</span>
               </li>
               <li className="flex items-center gap-2">
                 <Check className="w-4 h-4 text-emerald-400 shrink-0" />

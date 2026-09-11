@@ -1,5 +1,4 @@
 import React from 'react';
-import { Task, TaskNode } from '../../types';
 import { 
   Sparkles, 
   CheckCircle2, 
@@ -18,28 +17,22 @@ export interface ChatMessage {
   sender: 'user' | 'aura';
   text: string;
   timestamp: string;
-  task?: Task;
   websiteUrl?: string;
-  activeAgents?: string[];
   status?: 'planning' | 'executing' | 'verifying' | 'completed' | 'error';
 }
 
 interface AuraConversationProps {
   messages: ChatMessage[];
-  currentTask?: Task | null;
-  onSelectTask?: (task: Task) => void;
   onOpenWebsitePreview?: () => void;
   className?: string;
 }
 
 export const AuraConversation: React.FC<AuraConversationProps> = ({
   messages,
-  currentTask,
-  onSelectTask,
   onOpenWebsitePreview,
   className = ''
 }) => {
-  if (messages.length === 0 && !currentTask) {
+  if (messages.length === 0) {
     return null;
   }
 
@@ -84,20 +77,7 @@ export const AuraConversation: React.FC<AuraConversationProps> = ({
               </p>
 
               {/* Active Agent Badges */}
-              {msg.activeAgents && msg.activeAgents.length > 0 && (
-                <div className="mt-3 pt-2.5 border-t border-white/10 flex flex-wrap items-center gap-1.5">
-                  <span className="text-[11px] font-mono text-slate-400 mr-1">Dispatched Agents:</span>
-                  {msg.activeAgents.map((ag) => (
-                    <span
-                      key={ag}
-                      className="px-2 py-0.5 rounded-lg bg-cyan-950/60 border border-cyan-800 text-[11px] font-mono text-cyan-300 flex items-center gap-1"
-                    >
-                      <Cpu className="w-3 h-3" />
-                      {ag}
-                    </span>
-                  ))}
-                </div>
-              )}
+              
 
               {/* Website Preview Trigger Button if generated */}
               {msg.websiteUrl && onOpenWebsitePreview && (

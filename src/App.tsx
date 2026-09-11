@@ -4,8 +4,6 @@ import { AuraCore } from './components/aura/AuraCore';
 import { AuraCommandBar } from './components/aura/AuraCommandBar';
 import { AuraConversation, ChatMessage } from './components/aura/AuraConversation';
 import { AuraUniverse } from './components/aura/AuraUniverse';
-import { TaskGraphViewer } from './components/TaskGraphViewer';
-import { AgentWorldView } from './components/AgentWorldView';
 import { WebsiteView } from './components/WebsiteView';
 import { MemoryManager } from './components/MemoryManager';
 import { PermissionsManager } from './components/PermissionsManager';
@@ -17,13 +15,10 @@ import { ProjectAllowanceModal } from './components/ProjectAllowanceModal';
 import { AutomationsView } from './components/AutomationsView';
 import { IntegrationsView } from './components/IntegrationsView';
 import { speechService } from './services/audio/speechService';
-import { auraBrain } from './services/ai/AuraBrain';
 import { 
   User, 
   AuraState, 
-  Task, 
   WebsiteProject, 
-  VirtualAgent, 
   ComputerPermissionConfig, 
   ToolDefinition, 
   ComputerPermissionType, 
@@ -61,18 +56,14 @@ export default function App() {
   
   // Execution & AI State
   const [isExecuting, setIsExecuting] = useState<boolean>(false);
-  const [currentTask, setCurrentTask] = useState<Task | null>(null);
-  const [tasksList, setTasksList] = useState<Task[]>([]);
   const [websitesList, setWebsitesList] = useState<WebsiteProject[]>([]);
   const [activeWebsite, setActiveWebsite] = useState<WebsiteProject | null>(null);
-  const [showTaskGraphModal, setShowTaskGraphModal] = useState<boolean>(false);
   const [showFullConversation, setShowFullConversation] = useState<boolean>(false);
 
   // Chat conversation stream
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   
-  // Agents, Permissions & Companion
-  const [agents, setAgents] = useState<VirtualAgent[]>([]);
+  // Permissions & local companion
   const [permissions, setPermissions] = useState<ComputerPermissionConfig[]>([]);
   const [tools, setTools] = useState<ToolDefinition[]>([]);
   const [companion, setCompanion] = useState({
@@ -86,7 +77,6 @@ export default function App() {
   const [isVoiceActive, setIsVoiceActive] = useState<boolean>(false);
   const [isListening, setIsListening] = useState<boolean>(false);
   const commandInFlightRef = useRef(false);
-  const progressedTasksRef = useRef(new Set<string>());
   const voiceSessionEnabledRef = useRef(false);
   const voiceStartInFlightRef = useRef(false);
   const welcomeShownRef = useRef(false);
@@ -109,9 +99,7 @@ export default function App() {
       setMessages([{ id: `welcome-${currentUser.id}`, sender: 'aura', text: welcome, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), status: 'completed' }]);
       speakAuraReply(welcome, 'IDLE', navigator.language.toLowerCase().startsWith('hi') ? 'hi' : 'en');
     }
-    fetchTasks();
     fetchWebsites();
-    fetchAgents();
     fetchPermissions();
     fetchTools();
     fetchProjectQuota();
@@ -132,21 +120,6 @@ export default function App() {
       }
     } catch (err) {
       console.error('Failed to fetch auth session:', err);
-    }
-  };
-
-  const fetchTasks = async () => {
-    try {
-      const res = await fetch('/api/tasks');
-      const contentType = res.headers.get('content-type') || '';
-      if (res.ok && contentType.includes('application/json')) {
-        const data = await res.json();
-        if (data.tasks) {
-          setTasksList(data.tasks);
-        }
-      }
-    } catch (err) {
-      console.error('Failed to fetch tasks:', err);
     }
   };
 
@@ -184,20 +157,7 @@ export default function App() {
     }
   };
 
-  const handleSimulateLimit = async () => {
-    try {
-      const res = await fetch('/api/usage/simulate-limit', { method: 'POST' });
-      const contentType = res.headers.get('content-type') || '';
-      if (res.ok && contentType.includes('application/json')) {
-        const data = await res.json();
-        if (data.quota) {
-          setProjectQuota(data.quota);
-        }
-      }
-    } catch (err) {
-      console.error('Failed to simulate quota limit:', err);
-    }
-  };
+  ;
 
   const handleResetQuota = async () => {
     try {
@@ -242,21 +202,6 @@ export default function App() {
       return { success: false, error: 'Unknown response' };
     } catch (err: any) {
       return { success: false, error: err?.message || 'Network error' };
-    }
-  };
-
-  const fetchAgents = async () => {
-    try {
-      const res = await fetch('/api/agents');
-      const contentType = res.headers.get('content-type') || '';
-      if (res.ok && contentType.includes('application/json')) {
-        const data = await res.json();
-        if (data.agents) {
-          setAgents(data.agents);
-        }
-      }
-    } catch (err) {
-      console.error('Failed to fetch agents:', err);
     }
   };
 
@@ -370,8 +315,6 @@ export default function App() {
     setIsVoiceActive(false);
     await fetch('/api/auth/logout', { method: 'POST' }).catch(() => undefined);
     setCurrentUser(null);
-    setCurrentTask(null);
-    setTasksList([]);
     setMessages([]);
     welcomeShownRef.current = false;
     setOrbState('IDLE');
@@ -392,26 +335,32 @@ export default function App() {
     if (!spoken) setOrbState('ERROR');
   };
 
-  // Execute Natural Command through AURA Brain DAG Orchestrator
+  // Execute a natural command through the single AURA Cognitive Brain.
+  // Conversation/question turns stay conversational; action requests are executed
+  // by the Python Central Brain and return a truthful result.
   const handleExecuteCommand = async (command: string, files?: File[]) => {
     if (!command.trim() && (!files || files.length === 0)) return;
     if (commandInFlightRef.current) return;
+
     commandInFlightRef.current = true;
 
     const commandId = typeof crypto !== 'undefined' && crypto.randomUUID
       ? crypto.randomUUID()
       : `cmd-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
     const userMsgId = `user-${Date.now()}`;
     const auraMsgId = `aura-${Date.now()}`;
-    const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const timestamp = new Date().toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit'
+    });
 
-    // Add user message to conversation
     setMessages(prev => [
       ...prev,
       {
         id: userMsgId,
         sender: 'user',
-        text: command,
+        text: command || (files?.length ? `Attached ${files.length} file${files.length > 1 ? 's' : ''}` : ''),
         timestamp
       }
     ]);
@@ -420,191 +369,166 @@ export default function App() {
     setOrbState('UNDERSTANDING');
 
     try {
-      const res = await fetch('/api/ai/orchestrate', {
+      /*
+       * Brain turn currently accepts JSON.
+       *
+       * Preserve the attachment information in the request metadata without
+       * pretending the files themselves were processed by the Brain. Actual
+       * file-content execution will be wired through the secure server-side
+       * upload bridge in the next migration phase.
+       */
+      const attachmentMetadata = (files || []).map(file => ({
+        name: file.name,
+        type: file.type,
+        size: file.size
+      }));
+
+      const res = await fetch('/api/brain/turn', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: command, commandId })
+        body: JSON.stringify({
+          prompt: command,
+          session_id: `aura-${currentUser?.id || 'session'}`,
+          interactive_confirm: true,
+          idempotency_key: commandId,
+          attachments: attachmentMetadata
+        })
       });
 
       const contentType = res.headers.get('content-type') || '';
-      const data = (res.ok && contentType.includes('application/json')) ? await res.json() : null;
+      const data = (
+        contentType.includes('application/json')
+      ) ? await res.json() : null;
 
-      if (data && data.task) {
-        setCurrentTask(data.task);
-        setTasksList(prev => [data.task, ...(prev || []).filter(t => t?.taskId !== data.task.taskId)]);
+      if (!res.ok) {
+        const errorText =
+          data?.error ||
+          data?.message ||
+          `AURA Brain request failed (${res.status})`;
 
-        if (data.website) {
-          setActiveWebsite(data.website);
-          setWebsitesList(prev => [data.website, ...(prev || []).filter(w => w?.id !== data.website.id)]);
-          if (data.openWebsite) {
-            setActiveTab('projects');
-          }
-        }
+        throw new Error(errorText);
+      }
 
-        fetchAgents();
+      const responseText =
+        data?.response ||
+        data?.answer ||
+        data?.message ||
+        data?.summary ||
+        data?.result?.response ||
+        data?.result?.answer ||
+        '';
 
-        const summaryText = data.summary || `AURA decomposed "${command}" into a parallel task DAG. Work delegated to SCOUT, PIXEL, CODE, and QA.`;
-        
-        // Add AURA response message
+      const intent = String(
+        data?.intent ||
+        data?.result?.intent ||
+        ''
+      ).toUpperCase();
+
+      const execution = data?.execution || data?.result?.execution;
+      const verification = data?.verification || data?.result?.verification;
+      const success =
+        data?.success === true ||
+        data?.result?.success === true ||
+        execution?.success === true;
+
+      /*
+       * The Brain is authoritative.
+       * Do NOT manufacture a task/DAG/agent result when the Brain returned
+       * a conversational or informational response.
+       */
+      if (responseText) {
         setMessages(prev => [
           ...prev,
           {
             id: auraMsgId,
             sender: 'aura',
-            text: summaryText,
-            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            task: data.task,
-            websiteUrl: data.website ? `/api/websites/${data.website.id}` : undefined,
-            activeAgents: ['AURA', 'SCOUT', 'PIXEL', 'CODE', 'QA'],
-            status: data.task.status === 'COMPLETED' ? 'completed' : 'executing'
+            text: responseText,
+            timestamp: new Date().toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit'
+            }),
+            status: intent === 'ACTION_REQUEST' && !success
+              ? 'executing'
+              : 'completed'
           }
         ]);
 
-        const nextState: AuraState = (data.auraState as AuraState) || (data.task.status === 'COMPLETED' ? 'SUCCESS' : 'WORKING');
-
-        speakAuraReply(summaryText, nextState, data.language);
-
-        if (data.task.status === 'WAITING_FOR_USER' || data.task.status === 'WAITING_FOR_APPROVAL') {
-          setOrbState('ERROR');
-        } else if (data.task.status === 'RUNNING') {
-          setOrbState('WORKING');
-          runParallelDAGProgression(data.task.taskId, auraMsgId);
-        } else {
-          setOrbState(nextState);
-          if (nextState === 'SUCCESS') {
-            setTimeout(() => setOrbState('IDLE'), 3500);
+        if (intent === 'ACTION_REQUEST') {
+          if (success) {
+            setOrbState('SUCCESS');
+            fetchWebsites();
+            fetchProjectQuota();
+          } else if (data?.clarification_required) {
+            setOrbState('WAITING');
+          } else {
+            setOrbState('ERROR');
           }
+        } else {
+          // CONVERSATION / QUESTION / FOLLOW_UP
+          setOrbState('IDLE');
         }
-      } else if (data && (data.answer || data.summary)) {
-        const responseText = data.answer || data.summary;
-        setMessages(prev => [...prev, {
-          id: auraMsgId,
-          sender: 'aura',
-          text: responseText,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          status: 'completed'
-        }]);
-        speakAuraReply(responseText, 'IDLE', data.language);
+
+        speakAuraReply(
+          responseText,
+          intent === 'ACTION_REQUEST' && success ? 'SUCCESS' : 'IDLE',
+          data?.language || data?.result?.language
+        );
+
+        if (intent === 'ACTION_REQUEST' && success) {
+          setTimeout(() => setOrbState('IDLE'), 3500);
+        }
       } else {
         setOrbState('ERROR');
+
         setMessages(prev => [
           ...prev,
           {
             id: auraMsgId,
             sender: 'aura',
-            text: `AURA could not create an executable task. No work was dispatched.`,
-            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            text: 'AURA received no usable response from the cognitive core. No work was reported as completed.',
+            timestamp: new Date().toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit'
+            }),
             status: 'error'
           }
         ]);
       }
+
+      /*
+       * Keep these values intentionally unused for now.
+       * They are retained here so the UI migration can expose verified
+       * execution/verification details in the next phase without changing
+       * the Brain contract again.
+       */
+      void execution;
+      void verification;
+
     } catch (err) {
-      console.error('Orchestration error:', err);
+      console.error('AURA Brain error:', err);
+
       setOrbState('ERROR');
+
+      const errorText = err instanceof Error
+        ? err.message
+        : 'AURA encountered an unexpected cognitive-core error.';
+
       setMessages(prev => [
         ...prev,
         {
           id: auraMsgId,
           sender: 'aura',
-          text: 'Encountered an issue processing command. Re-establishing neural link.',
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          text: `AURA could not complete this request: ${errorText}`,
+          timestamp: new Date().toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit'
+          }),
           status: 'error'
         }
       ]);
     } finally {
       setIsExecuting(false);
       commandInFlightRef.current = false;
-    }
-  };
-
-  // Poll the server-owned DAG until it reaches a terminal state.
-  const runParallelDAGProgression = async (taskId: string, messageId: string) => {
-    if (progressedTasksRef.current.has(taskId)) return;
-    progressedTasksRef.current.add(taskId);
-    for (let i = 0; i < 4; i++) {
-      await new Promise(r => setTimeout(r, 1400));
-      try {
-        const res = await fetch(`/api/tasks/${taskId}/advance`, { method: 'POST' });
-        const contentType = res.headers.get('content-type') || '';
-        if (res.ok && contentType.includes('application/json')) {
-          const data = await res.json();
-          if (data.task) {
-            setCurrentTask(data.task);
-            fetchAgents();
-            if (data.task.status === 'COMPLETED') {
-              setOrbState('SUCCESS');
-              fetchWebsites();
-
-              // Update conversation message status to completed
-              setMessages(prev => prev.map(m => m.id === messageId ? {
-                ...m,
-                status: 'completed',
-                websiteUrl: activeWebsite ? `/api/websites/${activeWebsite.id}` : m.websiteUrl
-              } : m));
-
-              speakAuraReply('Execution completed. The server verified the project artifact.');
-              setTimeout(() => setOrbState('IDLE'), 3000);
-              break;
-            }
-          }
-        }
-      } catch (err) {
-        break;
-      }
-    }
-  };
-
-  const handleAdvanceStep = async (taskId: string) => {
-    try {
-      const res = await fetch(`/api/tasks/${taskId}/advance`, { method: 'POST' });
-      const contentType = res.headers.get('content-type') || '';
-      if (res.ok && contentType.includes('application/json')) {
-        const data = await res.json();
-        if (data.task) {
-          setCurrentTask(data.task);
-          fetchAgents();
-          if (data.task.status === 'COMPLETED') {
-            setOrbState('SUCCESS');
-            fetchWebsites();
-            setTimeout(() => setOrbState('IDLE'), 3000);
-          }
-        }
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const handleApprove = async (taskId: string) => {
-    try {
-      const res = await fetch(`/api/tasks/${taskId}/approve`, { method: 'POST' });
-      const contentType = res.headers.get('content-type') || '';
-      if (res.ok && contentType.includes('application/json')) {
-        const data = await res.json();
-        if (data.task) {
-          setCurrentTask(data.task);
-          setOrbState('EXECUTING');
-          runParallelDAGProgression(taskId, `aura-${Date.now()}`);
-        }
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const handleReject = async (taskId: string) => {
-    try {
-      const res = await fetch(`/api/tasks/${taskId}/reject`, { method: 'POST' });
-      const contentType = res.headers.get('content-type') || '';
-      if (res.ok && contentType.includes('application/json')) {
-        const data = await res.json();
-        if (data.task) {
-          setCurrentTask(data.task);
-          setOrbState('IDLE');
-        }
-      }
-    } catch (err) {
-      console.error(err);
     }
   };
 
@@ -650,8 +574,6 @@ export default function App() {
           {activeTab === 'aura' && (
             <AuraUniverse
               state={orbState}
-              agents={agents}
-              currentTask={currentTask}
               messages={messages}
               quota={projectQuota}
               isExecuting={isExecuting}
@@ -659,65 +581,126 @@ export default function App() {
               onExecuteCommand={handleExecuteCommand}
               onMicToggle={handleToggleVoice}
               onSelectTab={(tab) => setActiveTab(tab)}
-              onInspectTask={() => setShowTaskGraphModal(true)}
             />
           )}
 
-          {/* TAB: WORK (Dedicated Task DAG Graph & Execution History) */}
+          {/* TAB: WORK — AURA execution activity */}
           {activeTab === 'work' && (
-            <div className="space-y-6">
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <div>
-                  <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                    <Cpu className="w-5 h-5 text-cyan-400" />
-                    <span>Parallel Task Execution Graph</span>
-                  </h2>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    Topological multi-level DAG with autonomous parallel agent delegation and human approval gateways.
-                  </p>
-                </div>
-
-                {tasksList.length > 1 && (
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs text-slate-400 font-mono">Tasks:</span>
-                    <select
-                      value={currentTask?.taskId || ''}
-                      onChange={(e) => {
-                        const t = tasksList.find(x => x.taskId === e.target.value);
-                        if (t) setCurrentTask(t);
-                      }}
-                      className="bg-slate-900 border border-white/10 text-xs rounded-xl px-3 py-1.5 text-slate-200 focus:outline-none"
-                    >
-                      {tasksList.map(t => (
-                        <option key={t.taskId} value={t.taskId}>{t.title}</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
+            <div className="space-y-6 max-w-5xl mx-auto w-full">
+              <div>
+                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                  <Cpu className="w-5 h-5 text-cyan-400" />
+                  <span>AURA Activity</span>
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Real conversation, execution, verification, and recovery activity from the AURA cognitive core.
+                </p>
               </div>
 
-              {currentTask ? (
-                <TaskGraphViewer
-                  task={currentTask}
-                  onAdvanceStep={handleAdvanceStep}
-                  onApprove={handleApprove}
-                  onReject={handleReject}
-                  onViewWebsite={() => setActiveTab('projects')}
-                />
-              ) : (
-                <div className="p-12 text-center rounded-3xl bg-slate-950/60 border border-white/10">
-                  <Cpu className="w-8 h-8 text-cyan-400 mx-auto mb-3 opacity-60" />
-                  <p className="text-sm font-bold text-white">No Active Task Graph</p>
-                  <p className="text-xs text-slate-400 mt-1">Submit a natural command in the command bar to synthesize a task DAG.</p>
+              <div className="rounded-3xl bg-slate-950/70 border border-white/10 overflow-hidden">
+                <div className="px-5 py-4 border-b border-white/10 flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-white">
+                      Cognitive Activity
+                    </p>
+                    <p className="text-[11px] text-slate-500 font-mono mt-1">
+                      {isExecuting ? 'PROCESSING REQUEST' : 'READY'}
+                    </p>
+                  </div>
+
+                  <div className={`text-[10px] font-mono px-2.5 py-1 rounded-full border ${
+                    isExecuting
+                      ? 'text-cyan-300 border-cyan-500/30 bg-cyan-500/10'
+                      : 'text-emerald-300 border-emerald-500/30 bg-emerald-500/10'
+                  }`}>
+                    {isExecuting ? 'ACTIVE' : 'STANDBY'}
+                  </div>
                 </div>
-              )}
+
+                <div className="divide-y divide-white/5">
+                  {messages.length === 0 ? (
+                    <div className="p-10 text-center">
+                      <Brain className="w-8 h-8 text-cyan-400 mx-auto mb-3 opacity-60" />
+                      <p className="text-sm font-semibold text-white">
+                        AURA is ready
+                      </p>
+                      <p className="text-xs text-slate-500 mt-1">
+                        Start a conversation or give AURA something to work on.
+                      </p>
+                    </div>
+                  ) : (
+                    messages.slice(-20).map((message) => (
+                      <div
+                        key={message.id}
+                        className="px-5 py-4 flex gap-4"
+                      >
+                        <div className={`mt-0.5 w-2 h-2 rounded-full shrink-0 ${
+                          message.sender === 'aura'
+                            ? 'bg-cyan-400'
+                            : 'bg-slate-500'
+                        }`} />
+
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="text-[10px] uppercase tracking-wider font-mono text-slate-500">
+                              {message.sender === 'aura' ? 'AURA' : 'YOU'}
+                            </span>
+                            <span className="text-[10px] font-mono text-slate-600">
+                              {message.timestamp}
+                            </span>
+                          </div>
+
+                          <p className="text-sm text-slate-200 mt-1 whitespace-pre-wrap">
+                            {message.text}
+                          </p>
+
+                          {message.status && (
+                            <span className="inline-block mt-2 text-[10px] font-mono uppercase text-slate-500">
+                              {message.status}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
             </div>
           )}
 
           {/* TAB: WORLD (2.5D Digital Workspace) */}
           {activeTab === 'world' && (
-            <div className="space-y-4">
-              <AgentWorldView agents={agents} />
+            <div className="space-y-6 max-w-5xl mx-auto w-full">
+              <div>
+                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                  <Globe className="w-5 h-5 text-cyan-400" />
+                  <span>AURA Workspace</span>
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  AURA's current cognitive and execution environment.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="rounded-3xl bg-slate-950/70 border border-white/10 p-5">
+                  <p className="text-[10px] font-mono uppercase text-slate-500">Cognitive State</p>
+                  <p className="text-lg font-bold text-cyan-300 mt-2">{orbState}</p>
+                </div>
+
+                <div className="rounded-3xl bg-slate-950/70 border border-white/10 p-5">
+                  <p className="text-[10px] font-mono uppercase text-slate-500">Execution</p>
+                  <p className="text-lg font-bold text-white mt-2">
+                    {isExecuting ? 'ACTIVE' : 'IDLE'}
+                  </p>
+                </div>
+
+                <div className="rounded-3xl bg-slate-950/70 border border-white/10 p-5">
+                  <p className="text-[10px] font-mono uppercase text-slate-500">Companion</p>
+                  <p className="text-lg font-bold text-white mt-2">
+                    {companion.connected ? 'CONNECTED' : 'NOT CONFIGURED'}
+                  </p>
+                </div>
+              </div>
             </div>
           )}
 
