@@ -312,7 +312,7 @@ export class RealExecutor {
     };
   }
 
-  // ==================== REAL PROJECT FILE GENERATION ====================
+  // ==================== REAL AURA NATIVE WEBSITE PROJECT ====================
   static createWebsiteProjectFiles(userId: string, site: {
     id: string;
     name: string;
@@ -325,84 +325,290 @@ export class RealExecutor {
     sections?: Array<{ id: string; title: string; content: string }>;
   }): { ok: boolean; files: Array<{ name: string; path: string; content: string }> } {
     const projectDir = RealExecutor.getWorkspacePath(userId, site.id);
+
     if (!fs.existsSync(projectDir)) {
       fs.mkdirSync(projectDir, { recursive: true });
     }
 
-    const pricingCardsHtml = (site.pricing || [
-      { name: 'Standard', price: '$49', period: '/mo', features: ['All features included', '24/7 support'] }
-    ]).map(p => `
-      <div class="border border-slate-800 bg-slate-900/60 p-6 rounded-xl hover:border-cyan-500/50 transition">
-        <h3 class="text-lg font-semibold text-white">${p.name}</h3>
-        <div class="mt-4 flex items-baseline text-white">
-          <span class="text-3xl font-bold tracking-tight">${p.price}</span>
-          <span class="ml-1 text-sm text-slate-400">${p.period || ''}</span>
-        </div>
-        <ul class="mt-6 space-y-3 text-sm text-slate-300">
-          ${(p.features || ['High performance', 'Responsive design', 'Instant support']).map(f => `<li class="flex items-center gap-2">✓ ${f}</li>`).join('')}
+    const cleanWhatsapp = (site.whatsappNumber || '').replace(/\D/g, '');
+    const title = site.name || 'AURA Project';
+    const headline = site.headline || title;
+    const description = site.description || `Welcome to ${title}.`;
+
+    const pricing = site.pricing || [
+      {
+        name: 'Starter',
+        price: '₹2,999',
+        period: '',
+        features: ['Professional website', 'Mobile responsive', 'WhatsApp CTA']
+      },
+      {
+        name: 'Growth',
+        price: '₹5,999',
+        period: '',
+        features: ['Everything in Starter', 'SEO setup', 'Conversion sections']
+      },
+      {
+        name: 'Premium',
+        price: '₹9,999',
+        period: '',
+        features: ['Everything in Growth', 'Advanced sections', 'Priority support']
+      }
+    ];
+
+    const pricingHtml = pricing.map((p) => `
+      <article class="pricing-card">
+        <h3>${p.name}</h3>
+        <div class="price">${p.price}<span>${p.period || ''}</span></div>
+        <ul>
+          ${(p.features || []).map(f => `<li>✓ ${f}</li>`).join('')}
         </ul>
-        <a href="https://wa.me/${(site.whatsappNumber || '').replace(/\D/g, '')}?text=Interested%20in%20${encodeURIComponent(p.name)}" class="mt-8 block w-full rounded-lg bg-cyan-600 px-4 py-2.5 text-center text-sm font-semibold text-white hover:bg-cyan-500 transition">Get Started</a>
-      </div>
+        <a class="button secondary" href="https://wa.me/${cleanWhatsapp}?text=Interested%20in%20${encodeURIComponent(p.name)}">Choose ${p.name}</a>
+      </article>
     `).join('\n');
 
-    const cleanWhatsapp = (site.whatsappNumber || '').replace(/\D/g, '');
+    const sectionsHtml = (site.sections || []).map((section) => `
+      <section id="${section.id}" class="content-section">
+        <div class="container">
+          <h2>${section.title}</h2>
+          <p>${section.content}</p>
+        </div>
+      </section>
+    `).join('\n');
 
     const indexHtml = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${site.name} | Official Website</title>
-  <meta name="description" content="${site.description || site.headline || ''}">
-  <script src="https://cdn.tailwindcss.com"></script>
+  <meta name="description" content="${description.replace(/"/g, '&quot;')}">
+  <title>${title.replace(/</g, '&lt;')} | Official Website</title>
+  <link rel="stylesheet" href="./style.css">
 </head>
-<body class="min-h-screen bg-[#060913] text-slate-100 font-sans antialiased">
-  <header class="border-b border-slate-800/80 bg-[#060913]/90 sticky top-0 z-50 backdrop-blur">
-    <div class="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
-      <div class="font-bold text-lg tracking-tight text-white">${site.name}</div>
-      <a href="https://wa.me/${cleanWhatsapp}" target="_blank" rel="noopener noreferrer" class="rounded-full bg-emerald-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-emerald-500 transition">WhatsApp Inquiry</a>
+<body>
+  <header class="site-header">
+    <div class="container nav">
+      <a class="brand" href="/">${title}</a>
+      <a class="button whatsapp" href="https://wa.me/${cleanWhatsapp}" target="_blank" rel="noopener noreferrer">WhatsApp</a>
     </div>
   </header>
 
   <main>
-    <section class="py-20 px-4 max-w-5xl mx-auto text-center">
-      <h1 class="text-4xl sm:text-5xl font-extrabold tracking-tight text-white mb-6">${site.headline || site.name}</h1>
-      <p class="text-lg text-slate-400 max-w-2xl mx-auto mb-10">${site.description || 'Welcome to our verified digital experience.'}</p>
-      <div class="flex justify-center gap-4">
-        <a href="#pricing" class="rounded-lg bg-cyan-500 px-6 py-3 font-semibold text-slate-950 hover:bg-cyan-400 transition">View Plans</a>
-        <a href="https://wa.me/${cleanWhatsapp}" class="rounded-lg border border-slate-700 bg-slate-800/50 px-6 py-3 font-semibold text-white hover:bg-slate-800 transition">Direct Message</a>
+    <section class="hero">
+      <div class="container hero-inner">
+        <div class="eyebrow">BUILT & VERIFIED BY AURA AI</div>
+        <h1>${headline}</h1>
+        <p>${description}</p>
+        <div class="actions">
+          <a class="button primary" href="#pricing">View Packages</a>
+          <a class="button secondary" href="https://wa.me/${cleanWhatsapp}" target="_blank" rel="noopener noreferrer">Talk on WhatsApp</a>
+        </div>
       </div>
     </section>
 
-    <section id="pricing" class="py-16 px-4 max-w-6xl mx-auto border-t border-slate-800/60">
-      <h2 class="text-2xl font-bold text-center text-white mb-10">Pricing & Packages</h2>
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-        ${pricingCardsHtml}
+    ${sectionsHtml}
+
+    <section id="pricing" class="pricing-section">
+      <div class="container">
+        <div class="section-heading">
+          <span>PACKAGES</span>
+          <h2>Choose the right option</h2>
+        </div>
+        <div class="pricing-grid">
+          ${pricingHtml}
+        </div>
+      </div>
+    </section>
+
+    <section id="contact" class="contact-section">
+      <div class="container">
+        <h2>Ready to get started?</h2>
+        <p>Connect directly and start a conversation.</p>
+        <a class="button primary" href="https://wa.me/${cleanWhatsapp}" target="_blank" rel="noopener noreferrer">Start WhatsApp Conversation</a>
       </div>
     </section>
   </main>
 
-  <footer class="border-t border-slate-800/80 py-8 text-center text-xs text-slate-500">
-    <p>© ${new Date().getFullYear()} ${site.name}. All rights reserved. Built with AURA AI.</p>
+  <footer>
+    <div class="container">
+      <span>© ${new Date().getFullYear()} ${title}. All rights reserved.</span>
+      <span>Built with AURA AI</span>
+    </div>
   </footer>
 </body>
 </html>`;
 
-    const styleCss = `/* Custom design tokens */
-:root {
-  --primary-glow: rgba(6, 182, 212, 0.2);
+    const styleCss = `:root {
+  --bg: #060913;
+  --surface: #0c1220;
+  --surface-2: #111a2b;
+  --text: #f8fafc;
+  --muted: #94a3b8;
+  --line: rgba(148,163,184,.18);
+  --primary: #22d3ee;
+  --success: #34d399;
+  --max: 1120px;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: radial-gradient(circle at 50% 0%, #101b32 0, var(--bg) 45%);
+  color: var(--text);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  line-height: 1.6;
+}
+a { color: inherit; text-decoration: none; }
+.container { width: min(var(--max), calc(100% - 40px)); margin: auto; }
+
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  border-bottom: 1px solid var(--line);
+  background: rgba(6,9,19,.86);
+  backdrop-filter: blur(18px);
+}
+.nav {
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+.brand { font-weight: 800; letter-spacing: -.02em; }
+
+.hero { padding: 120px 0 100px; }
+.hero-inner { max-width: 900px; text-align: center; }
+.eyebrow, .section-heading span {
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .2em;
+}
+h1 {
+  margin: 18px 0;
+  font-size: clamp(42px, 8vw, 82px);
+  line-height: .98;
+  letter-spacing: -.055em;
+}
+h2 {
+  font-size: clamp(30px, 5vw, 52px);
+  line-height: 1.05;
+  letter-spacing: -.04em;
+}
+.hero p, .content-section p, .contact-section p {
+  max-width: 720px;
+  margin: 0 auto;
+  color: var(--muted);
+  font-size: 18px;
+}
+.actions {
+  margin-top: 34px;
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 46px;
+  padding: 0 20px;
+  border-radius: 999px;
+  font-weight: 750;
+  transition: transform .2s ease, opacity .2s ease;
+}
+.button:hover { transform: translateY(-2px); opacity: .9; }
+.primary { background: var(--primary); color: #041018; }
+.secondary { border: 1px solid var(--line); background: var(--surface); }
+.whatsapp { background: var(--success); color: #03130d; }
+
+.content-section, .pricing-section, .contact-section {
+  padding: 90px 0;
+  border-top: 1px solid var(--line);
+}
+.content-section .container { text-align: center; }
+.section-heading { margin-bottom: 36px; }
+.section-heading h2 { margin: 12px 0 0; }
+
+.pricing-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+.pricing-card {
+  padding: 28px;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background: linear-gradient(180deg, rgba(17,26,43,.95), rgba(8,13,25,.95));
+}
+.pricing-card h3 { margin: 0; font-size: 20px; }
+.price { margin: 18px 0; font-size: 38px; font-weight: 850; }
+.price span { color: var(--muted); font-size: 14px; }
+.pricing-card ul { min-height: 120px; margin: 0 0 24px; padding: 0; list-style: none; color: var(--muted); }
+.pricing-card li { margin: 8px 0; }
+
+.contact-section { text-align: center; }
+.contact-section .button { margin-top: 26px; }
+
+footer {
+  border-top: 1px solid var(--line);
+  padding: 28px 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+footer .container {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+@media (max-width: 760px) {
+  .container { width: min(var(--max), calc(100% - 28px)); }
+  .hero { padding: 82px 0 70px; }
+  .pricing-grid { grid-template-columns: 1fr; }
+  footer .container { flex-direction: column; }
 }
 `;
 
+    const projectManifest = JSON.stringify({
+      schemaVersion: 1,
+      engine: 'AURA_NATIVE_WEBSITE_ENGINE',
+      projectId: site.id,
+      userId,
+      name: title,
+      category: site.category || 'general',
+      entry: 'index.html',
+      assets: [],
+      sourceFiles: ['index.html', 'style.css'],
+      deployment: {
+        provider: null,
+        status: 'NOT_DEPLOYED',
+        githubRequired: false
+      },
+      generatedAt: new Date().toISOString()
+    }, null, 2);
+
     const files = [
       { name: 'index.html', path: 'index.html', content: indexHtml },
-      { name: 'style.css', path: 'style.css', content: styleCss }
+      { name: 'style.css', path: 'style.css', content: styleCss },
+      { name: 'aura-project.json', path: 'aura-project.json', content: projectManifest }
     ];
 
     for (const file of files) {
-      fs.writeFileSync(path.join(projectDir, file.path), file.content, 'utf8');
+      const target = path.join(projectDir, file.path);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, file.content, 'utf8');
     }
 
-    return { ok: true, files };
+    const verified = files.every((file) => {
+      const target = path.join(projectDir, file.path);
+      return fs.existsSync(target) && fs.readFileSync(target, 'utf8') === file.content;
+    });
+
+    return { ok: verified, files };
   }
 }

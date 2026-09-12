@@ -1032,6 +1032,188 @@ async function startServer() {
     });
   });
 
+  // ===========================================================
+  // AURA NATIVE WEBSITE WORKSPACE API
+  // GitHub is NOT required for editing or verification.
+  // ===========================================================
+  app.get('/api/websites/:id/files', (req: Request, res: Response) => {
+    const currentUser = getRequestUser(req);
+    const site = websites.find(w => w.id === req.params.id);
+    if (!site) return res.status(404).json({ error: 'Website not found' });
+
+    const hasAccess =
+      currentUser.role === 'OWNER' ||
+      getUserProjectUsage(currentUser.id).projectIds.includes(site.id);
+
+    if (!hasAccess) {
+      return res.status(403).json({ error: 'Project access denied' });
+    }
+
+    const result = RealExecutor.listFiles(currentUser.id, site.id);
+    result.then((workspaceFiles) => {
+      if (!workspaceFiles.success) {
+        return res.status(500).json({
+          error: workspaceFiles.error || 'Unable to list project files',
+          verified: false
+        });
+      }
+
+      return res.json({
+        projectId: site.id,
+        workspace: RealExecutor.getWorkspacePath(currentUser.id, site.id),
+        files: workspaceFiles.data || [],
+        verified: workspaceFiles.verified
+      });
+    }).catch((error: any) => {
+      return res.status(500).json({
+        error: error?.message || 'Unable to list project files',
+        verified: false
+      });
+    });
+  });
+
+  app.get('/api/websites/:id/files/*', async (req: Request, res: Response) => {
+    const currentUser = getRequestUser(req);
+    const site = websites.find(w => w.id === req.params.id);
+    if (!site) return res.status(404).json({ error: 'Website not found' });
+
+    const hasAccess =
+      currentUser.role === 'OWNER' ||
+      getUserProjectUsage(currentUser.id).projectIds.includes(site.id);
+
+    if (!hasAccess) {
+      return res.status(403).json({ error: 'Project access denied' });
+    }
+
+    const relPath = String(req.params[0] || '');
+    if (!relPath || relPath.includes('..')) {
+      return res.status(400).json({
+        error: 'Invalid project file path'
+      });
+    }
+
+    const result = await RealExecutor.readFile(
+      currentUser.id,
+      site.id,
+      relPath
+    );
+
+    if (!result.success) {
+      return res.status(404).json({
+        error: result.error || 'File not found',
+        verified: false
+      });
+    }
+
+    return res.json({
+      projectId: site.id,
+      path: relPath,
+      content: result.data,
+      verified: result.verified
+    });
+  });
+
+  app.put('/api/websites/:id/files/*', async (req: Request, res: Response) => {
+    const currentUser = getRequestUser(req);
+    const site = websites.find(w => w.id === req.params.id);
+    if (!site) return res.status(404).json({ error: 'Website not found' });
+
+    const hasAccess =
+      currentUser.role === 'OWNER' ||
+      getUserProjectUsage(currentUser.id).projectIds.includes(site.id);
+
+    if (!hasAccess) {
+      return res.status(403).json({ error: 'Project access denied' });
+    }
+
+    const relPath = String(req.params[0] || '');
+    const content = req.body?.content;
+
+    if (!relPath || relPath.includes('..')) {
+      return res.status(400).json({
+        error: 'Invalid project file path'
+      });
+    }
+
+    if (typeof content !== 'string') {
+      return res.status(400).json({
+        error: 'content must be a string'
+      });
+    }
+
+    const writeResult = await RealExecutor.writeFile(
+      currentUser.id,
+      site.id,
+      relPath,
+      content
+    );
+
+    if (!writeResult.success || !writeResult.verified) {
+      return res.status(500).json({
+        error: writeResult.error || 'Project file write failed',
+        verified: false
+      });
+    }
+
+    const filesResult = await RealExecutor.listFiles(
+      currentUser.id,
+      site.id
+    );
+
+    const files = filesResult.data || [];
+    const persistedFiles = [];
+
+    for (const filePath of files) {
+      const fileResult = await RealExecutor.readFile(
+        currentUser.id,
+        site.id,
+        filePath
+      );
+
+      if (fileResult.success) {
+        persistedFiles.push({
+          name: path.basename(filePath),
+          path: filePath,
+          content: fileResult.data || '',
+          language: path.extname(filePath).replace('.', '') || 'text',
+          size: String((fileResult.data || '').length)
+        });
+      }
+    }
+
+    const verification = RealExecutor.verifyWebsiteProject(
+      persistedFiles.map(file => ({
+        name: file.name,
+        path: file.path,
+        content: file.content
+      }))
+    );
+
+    site.status = verification.ok ? 'ready' : 'draft';
+    site.updatedAt = new Date().toISOString();
+
+    AuraDB.saveProject({
+      id: site.id,
+      userId: currentUser.id,
+      name: site.name,
+      businessType: site.category,
+      status: site.status,
+      files: persistedFiles,
+      verification,
+      createdAt: site.createdAt,
+      updatedAt: site.updatedAt
+    });
+
+    return res.json({
+      success: true,
+      projectId: site.id,
+      path: relPath,
+      verified: true,
+      qaVerification: verification,
+      files: filesResult.data || []
+    });
+  });
+
   app.patch('/api/websites/:id', (req: Request, res: Response) => {
     const currentUser = getRequestUser(req);
     const site = websites.find(w => w.id === req.params.id);
@@ -1780,7 +1962,10 @@ async function startServer() {
   // ===========================================================
   const runPythonBrain = async (payload: any): Promise<any> => {
     return new Promise((resolve) => {
-      const pythonProcess = spawn('python3', ['-m', 'python_brain.cli', JSON.stringify(payload)], {
+      const pythonProcess = spawn('python3', ['-m', 'python_brain.cli', JSON.stringify({
+        ...payload,
+        data_dir: payload.data_dir || `${process.cwd()}/data`
+      })], {
         cwd: process.cwd(),
         env: { ...process.env }
       });

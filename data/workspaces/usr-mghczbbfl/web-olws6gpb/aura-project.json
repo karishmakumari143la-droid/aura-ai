@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "engine": "AURA_NATIVE_WEBSITE_ENGINE",
+  "projectId": "web-olws6gpb",
+  "userId": "usr-mghczbbfl",
+  "name": "AURA Native E2E 1789223903",
+  "category": "gym",
+  "entry": "index.html",
+  "assets": [],
+  "sourceFiles": [
+    "index.html",
+    "style.css"
+  ],
+  "deployment": {
+    "provider": null,
+    "status": "NOT_DEPLOYED",
+    "githubRequired": false
+  },
+  "generatedAt": "2026-09-12T14:38:23.782Z"
+}

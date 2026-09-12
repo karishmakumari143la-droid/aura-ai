@@ -35,13 +35,9 @@ def main():
         or os.environ.get("AURA_WORKSPACE_ROOT")
     )
 
-    # Keep persistent project data authoritative unless an explicit
-    # payload data_dir is supplied. The CLI may inherit a temporary
-    # runtime AURA_DATA_DIR from the server/launcher; that must not
-    # split durable state across different SQLite databases.
     data_dir = (
         payload.get("data_dir")
-        or "/workspaces/aura-ai/data"
+        or os.environ.get("AURA_DATA_DIR")
     )
 
     brain = AuraBrain(
@@ -174,11 +170,9 @@ def main():
             }))
             return
 
-        # Background task status must use the same persistent database
-        # as task creation/execution. Ignore inherited temporary
-        # AURA_DATA_DIR unless an explicit payload data_dir is supplied.
         data_dir = (
             payload.get("data_dir")
+            or os.environ.get("AURA_DATA_DIR")
             or brain.data_dir
         )
 

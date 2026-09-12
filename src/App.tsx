@@ -57,6 +57,7 @@ export default function App() {
   
   // Execution & AI State
   const [isExecuting, setIsExecuting] = useState<boolean>(false);
+  const [activeExecution, setActiveExecution] = useState<any | null>(null);
   const [websitesList, setWebsitesList] = useState<WebsiteProject[]>([]);
   const [activeWebsite, setActiveWebsite] = useState<WebsiteProject | null>(null);
   const [showFullConversation, setShowFullConversation] = useState<boolean>(false);
@@ -211,15 +212,25 @@ export default function App() {
 
   const fetchPermissions = async () => {
     try {
-      const res = await fetch('/api/computer/permissions');
+      const res = await fetch('/api/brain/permissions');
       const contentType = res.headers.get('content-type') || '';
       if (res.ok && contentType.includes('application/json')) {
         const data = await res.json();
-        if (data.permissions) {
-          setPermissions(data.permissions);
-        }
-        if (data.companion) {
-          setCompanion(data.companion);
+
+        if (data.permissions && typeof data.permissions === 'object') {
+          const permissionMap = data.permissions as Record<string, string>;
+
+          setPermissions(prev =>
+            prev.map(permission => ({
+              ...permission,
+              state:
+                permissionMap[permission.permission] === 'allow'
+                  ? 'allowed'
+                  : permissionMap[permission.permission] === 'deny'
+                    ? 'denied'
+                    : 'ask_each_time'
+            }))
+          );
         }
       }
     } catch (err) {
@@ -244,17 +255,26 @@ export default function App() {
 
   const handleUpdatePermission = async (permission: ComputerPermissionType, state: PermissionState) => {
     try {
-      const res = await fetch('/api/computer/permissions', {
+      const brainState =
+        state === 'allowed'
+          ? 'allow'
+          : state === 'denied'
+            ? 'deny'
+            : 'ask';
+
+      const res = await fetch('/api/brain/permissions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ permission, state })
+        body: JSON.stringify({
+          perm_key: permission,
+          state: brainState
+        })
       });
+
       const contentType = res.headers.get('content-type') || '';
       if (res.ok && contentType.includes('application/json')) {
-        const data = await res.json();
-        if (data.permissions) {
-          setPermissions(data.permissions);
-        }
+        await res.json();
+        await fetchPermissions();
       }
     } catch (err) {
       console.error('Failed to update permission:', err);
@@ -484,10 +504,24 @@ export default function App() {
 
       const execution = data?.execution || data?.result?.execution;
       const verification = data?.verification || data?.result?.verification;
+
+      // Expose only the Brain's real execution/verification payload.
+      // Never manufacture activity steps in the UI.
       const success =
         data?.success === true ||
         data?.result?.success === true ||
         execution?.success === true;
+
+      if (intent === 'ACTION_REQUEST' && (execution || verification)) {
+        setActiveExecution({
+          execution: execution || null,
+          verification: verification || null,
+          success,
+          intent
+        });
+      } else {
+        setActiveExecution(null);
+      }
 
       /*
        * The Brain is authoritative.
@@ -636,6 +670,7 @@ export default function App() {
               quota={projectQuota}
               isExecuting={isExecuting}
               isListening={isListening}
+              activeExecution={activeExecution}
               onExecuteCommand={handleExecuteCommand}
               onMicToggle={handleToggleVoice}
               onSelectTab={(tab) => setActiveTab(tab)}

@@ -3,6 +3,8 @@ import {
   Activity,
   BarChart3,
   Brain,
+  Eye,
+  X,
   Database,
   FileText,
   Globe2,
@@ -28,6 +30,12 @@ interface AuraUniverseProps {
   quota: ProjectQuotaStatus | null;
   isExecuting: boolean;
   isListening: boolean;
+  activeExecution?: {
+    execution?: any;
+    verification?: any;
+    success?: boolean;
+    intent?: string;
+  } | null;
   onExecuteCommand: (command: string, files?: File[]) => void;
   onMicToggle: () => void;
   onSelectTab: (
@@ -443,12 +451,15 @@ export const AuraUniverse: React.FC<
   quota,
   isExecuting,
   isListening,
+  activeExecution,
   onExecuteCommand,
   onMicToggle,
   onSelectTab,
 }) => {
   const [hoveredDomain, setHoveredDomain] =
     useState<string | null>(null);
+  const [showExecutionInspector, setShowExecutionInspector] =
+    useState(false);
 
   const recentActivity = messages
     .filter(
@@ -799,6 +810,47 @@ export const AuraUniverse: React.FC<
               )}
             </div>
 
+            {activeExecution && (
+              <button
+                type="button"
+                onClick={() => setShowExecutionInspector(true)}
+                className="w-full border border-cyan-300/20 bg-black/35 p-3 text-left backdrop-blur-md transition hover:border-cyan-300/40 hover:bg-cyan-400/10"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.18em] text-cyan-300">
+                    <Terminal className="h-3.5 w-3.5" />
+                    Live Work
+                  </span>
+
+                  <Eye className="h-3.5 w-3.5 text-slate-500" />
+                </div>
+
+                <div className="mt-2 flex items-center gap-2">
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full ${
+                      activeExecution.success
+                        ? 'bg-emerald-400'
+                        : isExecuting
+                          ? 'bg-cyan-400 animate-pulse'
+                          : 'bg-amber-400'
+                    }`}
+                  />
+
+                  <span className="text-xs font-mono text-white">
+                    {activeExecution.success
+                      ? 'WORK COMPLETED'
+                      : isExecuting
+                        ? 'AURA IS WORKING'
+                        : 'WORK REPORTED'}
+                  </span>
+                </div>
+
+                <p className="mt-1 text-[9px] text-slate-500">
+                  Click to inspect real execution details
+                </p>
+              </button>
+            )}
+
             <button
               type="button"
               onClick={() =>
@@ -850,6 +902,180 @@ export const AuraUniverse: React.FC<
           />
         </div>
       </div>
+
+      {showExecutionInspector && activeExecution && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label="AURA execution details"
+          onClick={() => setShowExecutionInspector(false)}
+        >
+          <div
+            className="max-h-[85vh] w-full max-w-2xl overflow-hidden rounded-2xl border border-cyan-300/20 bg-[#07101a] shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
+              <div>
+                <p className="flex items-center gap-2 text-sm font-semibold text-white">
+                  <Terminal className="h-4 w-4 text-cyan-300" />
+                  AURA Execution Inspector
+                </p>
+                <p className="mt-1 text-[10px] font-mono uppercase tracking-wider text-slate-500">
+                  {activeExecution.success ? 'VERIFIED / SUCCESS' : 'EXECUTION RESULT'}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowExecutionInspector(false)}
+                className="rounded-lg p-2 text-slate-500 transition hover:bg-white/5 hover:text-white"
+                aria-label="Close execution inspector"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="max-h-[calc(85vh-80px)] overflow-y-auto p-5 space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-xl border border-white/10 bg-black/25 p-3">
+                  <p className="text-[9px] font-mono uppercase text-slate-500">
+                    Intent
+                  </p>
+                  <p className="mt-1 text-xs font-mono text-cyan-300">
+                    {activeExecution.intent || 'ACTION_REQUEST'}
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-white/10 bg-black/25 p-3">
+                  <p className="text-[9px] font-mono uppercase text-slate-500">
+                    Result
+                  </p>
+                  <p className={`mt-1 text-xs font-mono ${
+                    activeExecution.success
+                      ? 'text-emerald-300'
+                      : 'text-amber-300'
+                  }`}>
+                    {activeExecution.success ? 'SUCCESS' : 'NOT VERIFIED'}
+                  </p>
+                </div>
+              </div>
+
+              <div>
+                <p className="mb-2 text-[10px] font-mono uppercase tracking-wider text-slate-500">
+                  Execution Timeline
+                </p>
+
+                {Array.isArray(activeExecution.execution?.executed_steps) &&
+                activeExecution.execution.executed_steps.length > 0 ? (
+                  <div className="space-y-2">
+                    {activeExecution.execution.executed_steps.map(
+                      (step: any, index: number) => {
+                        const verified =
+                          step?.outcome_verification?.verified === true ||
+                          step?.verification_status === 'VERIFIED';
+
+                        return (
+                          <div
+                            key={`${step?.tool || 'step'}-${index}`}
+                            className="rounded-xl border border-white/10 bg-black/35 p-3"
+                          >
+                            <div className="flex items-center gap-3">
+                              <span
+                                className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[9px] font-mono ${
+                                  verified
+                                    ? 'bg-emerald-400/10 text-emerald-300 border border-emerald-400/20'
+                                    : 'bg-cyan-400/10 text-cyan-300 border border-cyan-400/20'
+                                }`}
+                              >
+                                {index + 1}
+                              </span>
+
+                              <div className="min-w-0 flex-1">
+                                <p className="text-xs font-semibold text-white">
+                                  {step?.tool || step?.action || 'Execution step'}
+                                </p>
+
+                                <p className="mt-0.5 text-[10px] text-slate-500">
+                                  {verified
+                                    ? 'Verified successfully'
+                                    : step?.verification_status || 'Executed'}
+                                </p>
+                              </div>
+
+                              <span
+                                className={`text-[9px] font-mono uppercase ${
+                                  verified
+                                    ? 'text-emerald-300'
+                                    : 'text-slate-500'
+                                }`}
+                              >
+                                {verified ? 'VERIFIED' : 'EXECUTED'}
+                              </span>
+                            </div>
+
+                            {step?.args && (
+                              <details className="mt-3">
+                                <summary className="cursor-pointer text-[9px] font-mono uppercase tracking-wider text-slate-500 hover:text-cyan-300">
+                                  View operation details
+                                </summary>
+
+                                <pre className="mt-2 max-h-48 overflow-auto rounded-lg border border-white/5 bg-black/50 p-3 text-[9px] leading-relaxed text-slate-400 whitespace-pre-wrap break-words">
+{JSON.stringify(step.args, null, 2)}
+                                </pre>
+                              </details>
+                            )}
+
+                            {step?.result && (
+                              <details className="mt-2">
+                                <summary className="cursor-pointer text-[9px] font-mono uppercase tracking-wider text-slate-500 hover:text-cyan-300">
+                                  View result / output
+                                </summary>
+
+                                <pre className="mt-2 max-h-48 overflow-auto rounded-lg border border-white/5 bg-black/50 p-3 text-[9px] leading-relaxed text-slate-400 whitespace-pre-wrap break-words">
+{JSON.stringify(step.result, null, 2)}
+                                </pre>
+                              </details>
+                            )}
+
+                            {step?.outcome_verification && (
+                              <details className="mt-2">
+                                <summary className="cursor-pointer text-[9px] font-mono uppercase tracking-wider text-emerald-400/70 hover:text-emerald-300">
+                                  View verification
+                                </summary>
+
+                                <pre className="mt-2 max-h-48 overflow-auto rounded-lg border border-emerald-400/10 bg-black/40 p-3 text-[9px] leading-relaxed text-slate-400 whitespace-pre-wrap break-words">
+{JSON.stringify(step.outcome_verification, null, 2)}
+                                </pre>
+                              </details>
+                            )}
+                          </div>
+                        );
+                      }
+                    )}
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-white/10 bg-black/25 p-4">
+                    <p className="text-[10px] text-slate-500">
+                      No executed steps were reported by the cognitive core.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <p className="mb-2 text-[10px] font-mono uppercase tracking-wider text-slate-500">
+                  Final Verification
+                </p>
+
+                <pre className="max-h-56 overflow-auto rounded-xl border border-white/10 bg-black/50 p-4 text-[10px] leading-relaxed text-slate-300 whitespace-pre-wrap break-words">
+{JSON.stringify(activeExecution.verification ?? null, null, 2)}
+                </pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 };

@@ -28,6 +28,13 @@ SECRET_REDACTION_PATTERNS = [
     (r"(?i)AIza[0-9A-Za-z-_]{35}", "[GOOGLE_KEY_REDACTED]"),
 ]
 
+SENSITIVE_MEMORY_PATTERNS = [
+    r"(?i)\bpassword\b\s*(?:is|=|:)\s*\S+",
+    r"(?i)\b(?:api[_-]?key|access[_-]?token|access token|auth[_-]?token|auth token|bearer)\b\s*(?:is|=|:)\s*\S+",
+    r"(?i)\b(?:secret|credential|private[_-]?key)\b\s*(?:is|=|:)\s*\S+",
+    r"(?i)\b(?:ghp_|sk-|AIza)[A-Za-z0-9_\-\.]+",
+]
+
 class SecurityPolicy:
     @staticmethod
     def validate_command(command: str) -> Tuple[bool, Optional[str]]:
@@ -77,6 +84,14 @@ class SecurityPolicy:
             return False, error
 
         return True, None
+
+    @staticmethod
+    def contains_sensitive_memory(text: str) -> bool:
+        """Return True when text appears to contain a secret credential."""
+        if not isinstance(text, str) or not text.strip():
+            return False
+
+        return any(re.search(pattern, text) for pattern in SENSITIVE_MEMORY_PATTERNS)
 
     @staticmethod
     def redact_secrets(text: str) -> str:

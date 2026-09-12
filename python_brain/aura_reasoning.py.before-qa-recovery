@@ -185,8 +185,6 @@ class AuraReasoning:
             "why are",
             "how does",
             "how do",
-            "how should",
-            "what should",
             "explain",
             "define",
             "who made you",
@@ -202,16 +200,6 @@ class AuraReasoning:
             "kya hota hai",
             "kyun",
             "kaise kaam",
-            "kaise ho",
-            "aap kaise ho",
-            "tum kaise ho",
-            "aap kaise hain",
-            "tum kaise hain",
-            "कैसे हो",
-            "आप कैसे हो",
-            "तुम कैसे हो",
-            "आप कैसे हैं",
-            "तुम कैसे हैं",
         ]
 
         if any(x in low for x in question_starts) and not self._contains_action(low):
@@ -245,94 +233,6 @@ class AuraReasoning:
                 if language in ("hindi", "hinglish")
                 else
                 "What would you like me to work on? Tell me the project, website, coding task, research, or specific action."
-            )
-
-            return {
-                "intent": "CLARIFICATION",
-                "language": language,
-                "goal": text,
-                "conversation_or_action": "conversation",
-                "clarification": msg,
-                "plan": [],
-                "tools": [],
-                "response": msg,
-            }
-
-        # -----------------------------
-        # DECLARATIVE CONVERSATION
-        # -----------------------------
-        # A plain statement about the user, their preferences, or general
-        # conversation is not an executable request. Explicit memory commands
-        # are handled separately by brain.py before reaching this point.
-        declarative_markers = [
-            "i like ",
-            "i really like ",
-            "i prefer ",
-            "i love ",
-            "i hate ",
-            "i want ",
-            "i usually ",
-            "i always ",
-            "i never ",
-            "i am ",
-            "i'm ",
-            "my favorite ",
-            "my favourite ",
-            "mujhe pasand ",
-            "mujhe acha lagta",
-            "mujhe achha lagta",
-            "mujhe pasand hai",
-            "mujhe nahi pasand",
-        ]
-
-        if any(marker in low for marker in declarative_markers):
-            return {
-                "intent": "CONVERSATION",
-                "language": language,
-                "goal": text,
-                "conversation_or_action": "conversation",
-                "clarification": None,
-                "plan": [],
-                "tools": [],
-                "response": self._conversation_reply(low, language),
-            }
-
-        # -----------------------------
-        # WEBSITE REQUEST WITHOUT CONFIRMATION
-        # -----------------------------
-        # A vague website request starts a clarification flow. The actual
-        # build must wait for the user's explicit confirmation/action request.
-        website_request = any(
-            phrase in low
-            for phrase in [
-                "website banani hai",
-                "website banana hai",
-                "website banaani hai",
-                "website bnani hai",
-                "website bnana hai",
-                "website chahiye",
-            ]
-        )
-        confirmation_or_action = any(
-            phrase in low
-            for phrase in [
-                "okay bana do",
-                "ok bana do",
-                "haan bana do",
-                "yes bana do",
-                "bana do",
-                "create it",
-                "build it",
-                "make it",
-            ]
-        )
-
-        if website_request and not confirmation_or_action:
-            msg = (
-                "Bilkul. Website banane ke liye pehle naam, styling/design aur required features bataiye."
-                if language in ("hindi", "hinglish")
-                else
-                "Sure. Before I build it, please provide the website name, design/style, and required features."
             )
 
             return {
@@ -476,62 +376,6 @@ class AuraReasoning:
 
                 return steps
 
-        # Standalone website QA / recovery
-        # Must run before generic file/website rules so requests such as
-        # "QA verify this file and automatically fix/re-verify defects"
-        # invoke the real QA + recovery execution path.
-        is_qa_request = any(
-            phrase in low
-            for phrase in [
-                "qa verify",
-                "qa karo",
-                "qa kar",
-                "quality check",
-                "quality audit",
-                "website audit",
-                "audit website",
-                "audit this website",
-                "verify the website",
-                "verify website",
-                "verify this website",
-                "check website",
-                "check this website",
-                "defects",
-                "auto fix",
-                "automatically fix",
-                "fix karke re-verify",
-                "fix and re-verify",
-                "re-verify",
-                "reverify",
-            ]
-        )
-
-        if is_qa_request:
-            file_match = re.search(
-                r"([A-Za-z0-9_./-]+\.html?)\b",
-                goal,
-                re.IGNORECASE,
-            )
-            target_path = file_match.group(1) if file_match else ""
-
-            steps.append({
-                "step_id": 1,
-                "tool": "qa_verify_site",
-                "description": (
-                    "Run automated website QA and recover detected defects "
-                    "when automatic recovery is requested"
-                ),
-                "args": {
-                    "path": target_path,
-                },
-                "verification": (
-                    "Verify the website passes QA after automatic recovery "
-                    "and re-verification"
-                ),
-            })
-
-            return steps
-
         # File creation / write
         # Must run before generic code/file inspection rules.
         file_action = re.search(
@@ -606,7 +450,6 @@ class AuraReasoning:
                 "tool": "filesystem_write",
                 "description": "Create or update the website files",
                 "args": {
-                    "path": "created_sites/active_project/index.html",
                     "template": "landing_page",
                     "title": self._extract_website_title(goal),
                     "description": f"Responsive website created by AURA AI for: {goal}"
@@ -893,41 +736,12 @@ class AuraReasoning:
             return "Namaste! Main AURA AI hoon. Main aapki baat samajhne aur kaam ko step-by-step complete karne ke liye ready hoon."
 
         if language == "hinglish":
-            return "Hello! Main AURA AI hoon. Main theek hoon aur ready hoon — batao, aaj kis project ya kaam par kaam karna hai?"
+            return "Hello! Main AURA AI hoon. Main ready hoon — batao, aaj kis project ya kaam par kaam karna hai?"
 
         return "Hello! I’m AURA AI. I’m ready to understand what you need and help you get it done."
 
-    def _question_reply(
-        self,
-        prompt: str,
-        language: str,
-        conversation_context=None,
-    ) -> str:
+    def _question_reply(self, prompt: str, language: str) -> str:
         low = prompt.lower()
-
-        # Use explicitly saved memory when the question is about how AURA
-        # should respond or behave. Do not inject unrelated memories into
-        # ordinary factual questions.
-        memory_texts = []
-        for item in (conversation_context or []):
-            if item.get("role") != "memory":
-                continue
-            content = str(item.get("content", "")).strip()
-            if content:
-                memory_texts.append(content)
-
-        if any(phrase in low for phrase in [
-            "how should you respond",
-            "how should you answer",
-            "how do you respond to me",
-            "what should you respond",
-            "what should your responses",
-            "how should you talk to me",
-        ]) and memory_texts:
-            preference_text = "; ".join(memory_texts[:5])
-            if language in ("hindi", "hinglish"):
-                return f"Main aapki saved preference follow karunga: {preference_text}."
-            return f"I’ll follow your saved preference: {preference_text}."
 
         if "seo" in low:
             if language in ("hindi", "hinglish"):

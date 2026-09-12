@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from .brain import AuraBrain
 from .security.permissions import PermissionKey
 from .voice.service import VoiceService
-from .runtime.background import BackgroundTaskManager, DurableTaskDispatcher
+from .runtime.background import BackgroundTaskManager, DurableTaskDispatcher, RecurringWorkScheduler
 from .ws.events import event_dispatcher
 
 app = FastAPI(
@@ -70,6 +70,11 @@ durable_dispatcher = DurableTaskDispatcher(
     brain=brain,
 )
 
+recurring_scheduler = RecurringWorkScheduler(
+    task_manager=task_manager,
+    dispatcher=durable_dispatcher,
+)
+
 # ============================================================
 # DURABLE BACKGROUND RUNTIME
 # ============================================================
@@ -82,11 +87,31 @@ def recover_and_dispatch_durable_tasks():
         limit=10
     )
 
+    recurring_scheduler.start()
+
     print(
         "[AURA] Durable runtime startup: "
         f"recovered={len(recovered)} "
-        f"dispatched={len(dispatched)}"
+        f"dispatched={len(dispatched)} "
+        "recurring_scheduler=RUNNING"
     )
+
+
+# ============================================================
+# RECURRING WORK API MODELS
+# ============================================================
+
+class RecurringJobCreateRequest(BaseModel):
+    user_id: str = "default_user"
+    title: str
+    prompt: str
+    frequency: str
+    timezone: str = "UTC"
+    next_run_at: Optional[float] = None
+
+
+class RecurringJobToggleRequest(BaseModel):
+    enabled: bool
 
 
 # Request Models
@@ -189,6 +214,132 @@ def handle_voice(req: VoiceRequest):
         "tts": tts_payload
     }
 
+# ============================================================
+# LOCAL PERSISTENT RECURRING WORK
+# ============================================================
+
+@app.get("/api/brain/recurring")
+def list_recurring_jobs(user_id: str = Query("default_user")):
+    return {
+        "success": True,
+        "jobs": recurring_scheduler.list_jobs(user_id),
+    }
+
+
+@app.post("/api/brain/recurring")
+def create_recurring_job(req: RecurringJobCreateRequest):
+    try:
+        job_id = recurring_scheduler.create_job(
+            user_id=req.user_id,
+            title=req.title,
+            prompt=req.prompt,
+            frequency=req.frequency,
+            timezone=req.timezone,
+            next_run_at=req.next_run_at,
+        )
+
+        jobs = recurring_scheduler.list_jobs(req.user_id)
+        job = next(
+            (item for item in jobs if item["job_id"] == job_id),
+            None,
+        )
+
+        return {
+            "success": True,
+            "job": job,
+        }
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        )
+
+
+@app.post("/api/brain/recurring/{job_id}/toggle")
+def toggle_recurring_job(
+    job_id: str,
+    req: RecurringJobToggleRequest,
+):
+    updated = recurring_scheduler.set_enabled(
+        job_id,
+        req.enabled,
+    )
+
+    if not updated:
+        raise HTTPException(
+            status_code=404,
+            detail="RECURRING_JOB_NOT_FOUND",
+        )
+
+    return {
+        "success": True,
+        "job_id": job_id,
+        "enabled": req.enabled,
+    }
+
+
+@app.delete("/api/brain/recurring/{job_id}")
+def delete_recurring_job(job_id: str):
+    deleted = recurring_scheduler.delete_job(job_id)
+
+    if not deleted:
+        raise HTTPException(
+            status_code=404,
+            detail="RECURRING_JOB_NOT_FOUND",
+        )
+
+    return {
+        "success": True,
+        "job_id": job_id,
+        "deleted": True,
+    }
+
+
+@app.post("/api/brain/recurring/{job_id}/run")
+def run_recurring_job_now(job_id: str):
+    jobs = recurring_scheduler.list_jobs()
+
+    job = next(
+        (item for item in jobs if item["job_id"] == job_id),
+        None,
+    )
+
+    if not job:
+        raise HTTPException(
+            status_code=404,
+            detail="RECURRING_JOB_NOT_FOUND",
+        )
+
+    if not job["enabled"]:
+        raise HTTPException(
+            status_code=409,
+            detail="RECURRING_JOB_DISABLED",
+        )
+
+    # Execute immediately using the same durable AURA path.
+    task_id = task_manager.create_durable_task(
+        user_id=job["user_id"],
+        title=f"[Recurring Manual] {job['title']}",
+        task_type="aura_turn",
+        payload={
+            "prompt": job["prompt"],
+            "user_id": job["user_id"],
+            "session_id": f"recurring:{job['job_id']}",
+            "interactive_confirm": False,
+        },
+    )
+
+    durable_dispatcher.dispatch_task_async(task_id)
+
+    return {
+        "success": True,
+        "job_id": job_id,
+        "task_id": task_id,
+        "status": "QUEUED",
+    }
+
+
 @app.get("/api/brain/permissions")
 def get_permissions(user_id: str = Query("default_user")):
     return {"user_id": user_id, "permissions": brain.permissions.get_permissions(user_id)}
@@ -287,12 +438,61 @@ def execute_tool(req: ToolExecuteRequest):
         )
 
     elif req.tool == "git_action":
-        act = req.args.get("action", "status")
+        act = str(req.args.get("action", "status")).strip().lower()
+
         if act == "status":
             return brain.git.status()
+
         if act == "branch":
             return brain.git.branch()
-        return brain.git.log()
+
+        if act == "log":
+            try:
+                count = max(1, min(int(req.args.get("count", 5)), 50))
+            except (TypeError, ValueError):
+                count = 5
+            return brain.git.log(count)
+
+        if act == "diff":
+            return brain.git.diff()
+
+        if act == "commit":
+            message = str(req.args.get("message", "")).strip()
+            if not message:
+                return {
+                    "success": False,
+                    "status": "INVALID_REQUEST",
+                    "error": "COMMIT_MESSAGE_REQUIRED"
+                }
+            return brain.git.commit(
+                message=message,
+                add_all=bool(req.args.get("add_all", True))
+            )
+
+        if act == "push":
+            return brain.git.push(
+                remote=str(req.args.get("remote", "origin")).strip() or "origin",
+                branch=str(req.args.get("branch", "")).strip()
+            )
+
+        if act == "create_remote_repo":
+            repo_name = str(req.args.get("repo_name", "")).strip()
+            if not repo_name:
+                return {
+                    "success": False,
+                    "status": "INVALID_REQUEST",
+                    "error": "REPOSITORY_NAME_REQUIRED"
+                }
+            return brain.git.create_remote_repo(
+                repo_name=repo_name,
+                private=bool(req.args.get("private", True))
+            )
+
+        return {
+            "success": False,
+            "status": "INVALID_REQUEST",
+            "error": f"UNKNOWN_GIT_ACTION:{act}"
+        }
 
     elif req.tool == "web_research":
         return brain.research.search(

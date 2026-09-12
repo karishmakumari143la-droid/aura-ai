@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { User, AuraState, ProjectQuotaStatus } from '../../types';
 import { AuraLogo } from './AuraLogo';
 import { 
@@ -40,6 +40,53 @@ export const AuraNavbar: React.FC<AuraNavbarProps> = ({
   onOpenAllowanceModal
 }) => {
   const isOwner = user?.isOwner || user?.role === 'OWNER' || quota?.isOwner;
+
+  const [now, setNow] = useState(() => new Date());
+  const [locationStatus, setLocationStatus] = useState<'detecting' | 'detected' | 'unavailable'>('detecting');
+  const [locationText, setLocationText] = useState('Detecting location…');
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!navigator.geolocation) {
+      setLocationStatus('unavailable');
+      setLocationText('Location unavailable');
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const lat = position.coords.latitude.toFixed(4);
+        const lon = position.coords.longitude.toFixed(4);
+        setLocationStatus('detected');
+        setLocationText(`${lat}, ${lon}`);
+      },
+      () => {
+        setLocationStatus('unavailable');
+        setLocationText('Location unavailable');
+      },
+      {
+        enableHighAccuracy: false,
+        timeout: 10000,
+        maximumAge: 300000
+      }
+    );
+  }, []);
+
+  const timeText = now.toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  });
+
+  const dateText = now.toLocaleDateString([], {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric'
+  });
 
   const navItems = [
     { id: 'aura', label: 'AURA', icon: Sparkles },
@@ -115,6 +162,35 @@ export const AuraNavbar: React.FC<AuraNavbarProps> = ({
 
       {/* Right Controls */}
       <div className="flex items-center gap-2 sm:gap-2.5">
+
+        {/* Live AURA system clock + date + user location */}
+        <div
+          className="hidden lg:flex items-center gap-2 px-2.5 py-1 rounded-xl bg-slate-950/80 border border-white/[0.08]"
+          title={`User location: ${locationText}`}
+        >
+          <div className="text-right leading-tight">
+            <div className="font-mono text-[11px] font-semibold text-cyan-300 tabular-nums">
+              {timeText}
+            </div>
+            <div className="text-[9px] text-slate-500">
+              {dateText}
+            </div>
+          </div>
+
+          <span
+            className={`w-1.5 h-1.5 rounded-full ${
+              locationStatus === 'detected'
+                ? 'bg-emerald-400'
+                : locationStatus === 'detecting'
+                  ? 'bg-amber-400 animate-pulse'
+                  : 'bg-slate-600'
+            }`}
+          />
+
+          <div className="max-w-[120px] truncate font-mono text-[9px] text-slate-400">
+            {locationText}
+          </div>
+        </div>
         {/* Daily Project Allowance Status Indicator (Quiet, Clean, Clear) */}
         <button
           type="button"

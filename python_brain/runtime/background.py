@@ -22,6 +22,7 @@ class BackgroundTaskManager:
 
     ALLOWED_DURABLE_TASK_TYPES = frozenset({
         "terminal_command",
+        "aura_turn",
     })
 
     def __init__(self, db_path: Optional[str] = None):
@@ -137,6 +138,30 @@ class BackgroundTaskManager:
             if cwd is not None and not isinstance(cwd, str):
                 raise ValueError(
                     "terminal_command cwd must be a string."
+                )
+
+        elif task_type == "aura_turn":
+            prompt = payload.get("prompt")
+
+            if not isinstance(prompt, str) or not prompt.strip():
+                raise ValueError(
+                    "aura_turn requires a non-empty prompt."
+                )
+
+            payload_user_id = payload.get("user_id", user_id)
+            payload_session_id = payload.get(
+                "session_id",
+                "background",
+            )
+
+            if not isinstance(payload_user_id, str) or not payload_user_id.strip():
+                raise ValueError(
+                    "aura_turn user_id must be a non-empty string."
+                )
+
+            if not isinstance(payload_session_id, str) or not payload_session_id.strip():
+                raise ValueError(
+                    "aura_turn session_id must be a non-empty string."
                 )
 
         try:
@@ -450,6 +475,345 @@ class BackgroundTaskManager:
         return task_id
 
 
+class RecurringWorkScheduler:
+    """
+    Persistent local scheduler for AURA recurring work.
+
+    Scheduling metadata lives in SQLite. Actual execution is delegated to
+    the existing durable aura_turn worker, so scheduled work remains
+    restart-safe and independent from the API/UI process.
+    """
+
+    ALLOWED_FREQUENCIES = frozenset({
+        "hourly",
+        "daily",
+        "weekly",
+    })
+
+    def __init__(
+        self,
+        task_manager: BackgroundTaskManager,
+        dispatcher: "DurableTaskDispatcher",
+        poll_seconds: int = 15,
+    ):
+        self.task_manager = task_manager
+        self.dispatcher = dispatcher
+        self.poll_seconds = max(5, int(poll_seconds))
+        self.db_path = task_manager.db_path
+        self._stop_event = threading.Event()
+        self._thread = None
+        self._init_db()
+
+    def _init_db(self):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS recurring_jobs (
+                    job_id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    prompt TEXT NOT NULL,
+                    frequency TEXT NOT NULL,
+                    timezone TEXT NOT NULL DEFAULT 'UTC',
+                    next_run_at REAL NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    last_run_at REAL,
+                    last_task_id TEXT,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                )
+            """)
+
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_recurring_jobs_due
+                ON recurring_jobs(enabled, next_run_at)
+            """)
+
+            conn.commit()
+
+    @staticmethod
+    def _next_timestamp(
+        current_timestamp: float,
+        frequency: str,
+    ) -> float:
+        intervals = {
+            "hourly": 60 * 60,
+            "daily": 24 * 60 * 60,
+            "weekly": 7 * 24 * 60 * 60,
+        }
+
+        if frequency not in intervals:
+            raise ValueError(
+                f"Unsupported recurring frequency: {frequency}"
+            )
+
+        return current_timestamp + intervals[frequency]
+
+    def create_job(
+        self,
+        user_id: str,
+        title: str,
+        prompt: str,
+        frequency: str,
+        timezone: str = "UTC",
+        next_run_at: Optional[float] = None,
+    ) -> str:
+        if not isinstance(user_id, str) or not user_id.strip():
+            raise ValueError("Recurring job user_id is required.")
+
+        if not isinstance(title, str) or not title.strip():
+            raise ValueError("Recurring job title is required.")
+
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValueError("Recurring job prompt is required.")
+
+        frequency = str(frequency).lower().strip()
+        if frequency not in self.ALLOWED_FREQUENCIES:
+            raise ValueError(
+                f"Unsupported recurring frequency: {frequency}"
+            )
+
+        if not isinstance(timezone, str) or not timezone.strip():
+            timezone = "UTC"
+
+        now = time.time()
+        scheduled_at = (
+            float(next_run_at)
+            if next_run_at is not None
+            else self._next_timestamp(now, frequency)
+        )
+
+        job_id = str(uuid.uuid4())
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                INSERT INTO recurring_jobs (
+                    job_id,
+                    user_id,
+                    title,
+                    prompt,
+                    frequency,
+                    timezone,
+                    next_run_at,
+                    enabled,
+                    last_run_at,
+                    last_task_id,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, 1, NULL, NULL, ?, ?)
+            """, (
+                job_id,
+                user_id,
+                title.strip(),
+                prompt.strip(),
+                frequency,
+                timezone.strip(),
+                scheduled_at,
+                now,
+                now,
+            ))
+            conn.commit()
+
+        return job_id
+
+    def list_jobs(self, user_id: Optional[str] = None):
+        query = """
+            SELECT
+                job_id,
+                user_id,
+                title,
+                prompt,
+                frequency,
+                timezone,
+                next_run_at,
+                enabled,
+                last_run_at,
+                last_task_id,
+                created_at,
+                updated_at
+            FROM recurring_jobs
+        """
+        params = []
+
+        if user_id is not None:
+            query += " WHERE user_id = ?"
+            params.append(user_id)
+
+        query += " ORDER BY created_at DESC"
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(query, params).fetchall()
+
+        return [dict(row) for row in rows]
+
+    def set_enabled(self, job_id: str, enabled: bool) -> bool:
+        now = time.time()
+
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("""
+                UPDATE recurring_jobs
+                SET enabled = ?, updated_at = ?
+                WHERE job_id = ?
+            """, (
+                1 if enabled else 0,
+                now,
+                job_id,
+            ))
+            conn.commit()
+            return cursor.rowcount == 1
+
+    def delete_job(self, job_id: str) -> bool:
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                "DELETE FROM recurring_jobs WHERE job_id = ?",
+                (job_id,),
+            )
+            conn.commit()
+            return cursor.rowcount == 1
+
+    def _claim_due_job(self):
+        """
+        Atomically claim one due job by advancing next_run_at.
+
+        This prevents two scheduler iterations/processes from creating
+        duplicate executions for the same scheduled occurrence.
+        """
+        now = time.time()
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+
+            row = conn.execute("""
+                SELECT *
+                FROM recurring_jobs
+                WHERE enabled = 1
+                  AND next_run_at <= ?
+                ORDER BY next_run_at ASC
+                LIMIT 1
+            """, (now,)).fetchone()
+
+            if not row:
+                return None
+
+            job = dict(row)
+
+            next_run = self._next_timestamp(
+                float(job["next_run_at"]),
+                job["frequency"],
+            )
+
+            cursor = conn.execute("""
+                UPDATE recurring_jobs
+                SET
+                    next_run_at = ?,
+                    last_run_at = ?,
+                    updated_at = ?
+                WHERE job_id = ?
+                  AND enabled = 1
+                  AND next_run_at = ?
+            """, (
+                next_run,
+                now,
+                now,
+                job["job_id"],
+                job["next_run_at"],
+            ))
+
+            conn.commit()
+
+            if cursor.rowcount != 1:
+                return None
+
+            return job
+
+    def run_due_once(self) -> Optional[Dict[str, Any]]:
+        job = self._claim_due_job()
+
+        if not job:
+            return None
+
+        task_id = self.task_manager.create_durable_task(
+            user_id=job["user_id"],
+            title=f"[Recurring] {job['title']}",
+            task_type="aura_turn",
+            payload={
+                "prompt": job["prompt"],
+                "user_id": job["user_id"],
+                "session_id": f"recurring:{job['job_id']}",
+                "interactive_confirm": False,
+            },
+        )
+
+        self.dispatcher.dispatch_task_async(task_id)
+
+        now = time.time()
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                UPDATE recurring_jobs
+                SET
+                    last_task_id = ?,
+                    updated_at = ?
+                WHERE job_id = ?
+            """, (
+                task_id,
+                now,
+                job["job_id"],
+            ))
+            conn.commit()
+
+        return {
+            "job_id": job["job_id"],
+            "task_id": task_id,
+            "title": job["title"],
+            "frequency": job["frequency"],
+            "next_run_at": job["next_run_at"],
+        }
+
+    def run_forever(self):
+        while not self._stop_event.is_set():
+            try:
+                while True:
+                    result = self.run_due_once()
+                    if result is None:
+                        break
+
+                    print(
+                        "[AURA] Recurring work dispatched: "
+                        f"job={result['job_id']} "
+                        f"task={result['task_id']}"
+                    )
+
+            except Exception as exc:
+                print(
+                    f"[AURA] Recurring scheduler error: {exc}"
+                )
+
+            self._stop_event.wait(self.poll_seconds)
+
+    def start(self):
+        if self._thread and self._thread.is_alive():
+            return
+
+        self._stop_event.clear()
+
+        self._thread = threading.Thread(
+            target=self.run_forever,
+            name="aura-recurring-scheduler",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def stop(self):
+        self._stop_event.set()
+
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=2)
+
+        self._thread = None
+
+
 class DurableTaskDispatcher:
     """
     Restart-safe dispatcher for allowlisted durable tasks.
@@ -618,6 +982,9 @@ class DurableTaskDispatcher:
             if task_type == "terminal_command":
                 result = self._execute_terminal(payload)
 
+            elif task_type == "aura_turn":
+                result = self._execute_aura_turn(payload)
+
             else:
                 raise ValueError(
                     f"Unsupported durable task type: {task_type}"
@@ -661,6 +1028,53 @@ class DurableTaskDispatcher:
                 },
             )
             return False
+
+    def _execute_aura_turn(self, payload: Dict[str, Any]):
+        if self.brain is None:
+            raise RuntimeError(
+                "AURA brain execution backend is not configured."
+            )
+
+        prompt = payload.get("prompt")
+        user_id = payload.get("user_id", "default_user")
+        session_id = payload.get("session_id", "background")
+        interactive_confirm = bool(
+            payload.get("interactive_confirm", False)
+        )
+        scope_id = payload.get("scope_id")
+        grant_id = payload.get("grant_id")
+
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValueError(
+                "aura_turn requires a non-empty prompt."
+            )
+
+        if not isinstance(user_id, str) or not user_id.strip():
+            raise ValueError(
+                "aura_turn user_id must be a non-empty string."
+            )
+
+        if not isinstance(session_id, str) or not session_id.strip():
+            raise ValueError(
+                "aura_turn session_id must be a non-empty string."
+            )
+
+        result = self.brain.process_turn(
+            prompt=prompt,
+            user_id=user_id,
+            session_id=session_id,
+            interactive_confirm=interactive_confirm,
+            scope_id=scope_id,
+            grant_id=grant_id,
+        )
+
+        if not isinstance(result, dict):
+            return {
+                "success": False,
+                "error": "AURA_TURN_INVALID_RESULT",
+            }
+
+        return result
 
     def _execute_terminal(self, payload: Dict[str, Any]):
         command = payload.get("command")

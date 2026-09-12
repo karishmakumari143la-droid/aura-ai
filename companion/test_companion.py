@@ -23,20 +23,20 @@ class TestAuraCompanion(unittest.TestCase):
     def test_permission_matrix(self):
         # ALLOW should pass automatically
         self.companion.set_permission("FILES_READ", "allow")
-        allowed, _ = self.companion.check_permission("FILES_READ")
+        allowed, _, _ = self.companion.check_permission("FILES_READ")
         self.assertTrue(allowed)
 
         # DENY should block immediately
         self.companion.set_permission("FILES_READ", "deny")
-        allowed, msg = self.companion.check_permission("FILES_READ")
+        allowed, msg, _ = self.companion.check_permission("FILES_READ")
         self.assertFalse(allowed)
-        self.assertIn("DENIED", msg)
+        self.assertIn("DENY", msg)
 
         # ASK should block unless confirmed
         self.companion.set_permission("TERMINAL_EXECUTE", "ask")
-        allowed_unconf, _ = self.companion.check_permission("TERMINAL_EXECUTE", interactive_confirm=False)
+        allowed_unconf, _, _ = self.companion.check_permission("TERMINAL_EXECUTE", interactive_confirm=False)
         self.assertFalse(allowed_unconf)
-        allowed_conf, _ = self.companion.check_permission("TERMINAL_EXECUTE", interactive_confirm=True)
+        allowed_conf, _, _ = self.companion.check_permission("TERMINAL_EXECUTE", interactive_confirm=True)
         self.assertTrue(allowed_conf)
 
     def test_filesystem_write_and_read(self):

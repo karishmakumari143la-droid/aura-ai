@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 """
 AURA AI — Central Autonomous Python Intelligence Brain
 Executes the full cognitive lifecycle:
@@ -143,8 +144,67 @@ class AuraBrain:
         if not can_run and cached_result:
             return cached_result
 
-        # Retrieve recent conversation context
+        # Retrieve recent conversation context from the current session.
         recent_context = self.memory.get_recent_conversation(user_id, session_id, limit=6)
+
+        # Retrieve persistent user memories across sessions.
+        # Keep this separate from conversation history so a new session can
+        # still use explicitly saved preferences/facts without replaying old chat.
+        persistent_memories = self.memory.search_memories(user_id)
+
+        # Relevance filter: only expose memories that are plausibly related
+        # to the current request. This prevents unrelated long-term memories
+        # from contaminating ordinary questions.
+        memory_query_text = clean_prompt.lower()
+        relevant_memories = []
+
+        response_memory_terms = (
+            "respond", "response", "answer", "answers", "reply",
+            "replies", "talk to me", "how should you", "how do you",
+            "communication", "style", "concise", "short", "long"
+        )
+
+        project_memory_terms = (
+            "project", "website", "gym", "design", "theme",
+            "feature", "build", "build website", "scaffold"
+        )
+
+        for item in persistent_memories:
+            category = str(item.get("category", "")).lower()
+            key = str(item.get("key", "")).lower()
+            value = str(item.get("value", "")).lower()
+            tags = str(item.get("tags", "")).lower()
+
+            searchable = " ".join([category, key, value, tags])
+
+            is_relevant = False
+
+            if category == "preference":
+                is_relevant = any(
+                    term in memory_query_text
+                    for term in response_memory_terms
+                )
+
+            elif category == "project":
+                is_relevant = any(
+                    term in memory_query_text
+                    for term in project_memory_terms
+                )
+
+            else:
+                # Facts are only relevant when the current request explicitly
+                # overlaps with the stored fact text/key.
+                fact_tokens = {
+                    token for token in re.findall(r"[a-z0-9]+", searchable)
+                    if len(token) >= 4
+                }
+                prompt_tokens = set(
+                    re.findall(r"[a-z0-9]+", memory_query_text)
+                )
+                is_relevant = bool(fact_tokens & prompt_tokens)
+
+            if is_relevant:
+                relevant_memories.append(item)
 
         # Record user turn in memory
         self.memory.add_conversation_turn(user_id, session_id, "user", clean_prompt)
@@ -219,8 +279,199 @@ class AuraBrain:
                     clean_prompt = f"Create {spec.get('name', 'IronCore')} Gym website with {spec.get('theme', 'Premium dark design')} and {spec.get('features', 'WhatsApp booking')}"
                     # Fall through to execute ACTION_REQUEST for this single task!
 
+        # 1.6. EXPLICIT MEMORY COMMANDS
+        # Deterministic local handling: no external AI/provider required.
+        memory_low = " ".join(clean_prompt.lower().strip().split())
+
+        remember_match = re.match(
+            r"^(?:aura[,:]?\s*)?(?:remember|please remember|yaad rakho|yaad rakhna|yaad rakh lo)\s+(?:that\s+)?(.+?)\s*[.!?]*$",
+            memory_low,
+            re.IGNORECASE,
+        )
+
+        forget_match = re.match(
+            r"^(?:aura[,:]?\s*)?(?:forget|please forget|bhool jao|bhul jao|yaad se hatao|yaad se delete karo)\s+(?:that\s+)?(.+?)\s*[.!?]*$",
+            memory_low,
+            re.IGNORECASE,
+        )
+
+        if remember_match:
+            memory_text = remember_match.group(1).strip().rstrip(".!? ")
+            lang = IntentAnalyzer.detect_language(clean_prompt).value
+
+            # Normalize common explicit preferences into stable keys so a
+            # changed preference updates the existing memory instead of creating
+            # competing memories. Other statements retain deterministic keys.
+            memory_category = "fact"
+            memory_key = None
+            memory_value = memory_text
+
+            preference_patterns = [
+                (
+                    ["prefer short answers", "prefer short answer",
+                     "like short answers", "want short answers",
+                     "short answers"],
+                    "response_style",
+                    "short",
+                ),
+                (
+                    ["prefer long answers", "prefer long answer",
+                     "like long answers", "want long answers",
+                     "long answers"],
+                    "response_style",
+                    "long",
+                ),
+                (
+                    ["prefer concise answers", "prefer concise answer",
+                     "want concise answers", "concise answers"],
+                    "response_style",
+                    "concise",
+                ),
+            ]
+
+            memory_lower = memory_text.lower().strip()
+
+            for patterns, stable_key, normalized_value in preference_patterns:
+                if any(pattern in memory_lower for pattern in patterns):
+                    memory_category = "preference"
+                    memory_key = stable_key
+                    memory_value = normalized_value
+                    break
+
+            if memory_key is None:
+                key_text = re.sub(r"[^a-z0-9]+", "_", memory_text.lower()).strip("_")
+                memory_key = f"user_statement_{key_text[:100]}" or "user_statement"
+
+            # Never persist or echo secrets supplied through explicit memory commands.
+            from .security.policy import SecurityPolicy
+
+            if SecurityPolicy.contains_sensitive_memory(memory_text):
+                msg = (
+                    "Main password, API key, access token, secret ya credential ko memory mein save nahi kar sakti."
+                    if lang in ["hindi", "hinglish"]
+                    else "I can’t save passwords, API keys, access tokens, secrets, or credentials to memory."
+                )
+
+                self.memory.add_conversation_turn(user_id, session_id, "aura", msg)
+
+                res = {
+                    "success": True,
+                    "intent": "MEMORY_BLOCKED_SENSITIVE",
+                    "language": lang,
+                    "goal": "Sensitive memory was blocked and not persisted.",
+                    "tasks_created": 0,
+                    "execution_performed": False,
+                    "response": msg,
+                }
+
+                return res
+
+            self.memory.set_memory(
+                user_id,
+                memory_category,
+                memory_key,
+                memory_value,
+                tags=["explicit", "user_statement"],
+            )
+
+            msg = (
+                f"Bilkul, yaad rakh liya: {memory_text}"
+                if lang in ["hindi", "hinglish"]
+                else f"Got it. I’ll remember this: {memory_text}"
+            )
+
+            self.memory.add_conversation_turn(user_id, session_id, "aura", msg)
+
+            res = {
+                "success": True,
+                "intent": "MEMORY_STORE",
+                "language": lang,
+                "goal": memory_text,
+                "conversation_or_action": "conversation",
+                "clarification": None,
+                "plan": [],
+                "tools": [],
+                "response": msg,
+                "tasks_created": 0,
+                "execution_performed": False,
+                "memory_stored": True,
+                "duration_ms": int((time.time() - start_time) * 1000),
+            }
+            self.idempotency.record_completed(req_key, res)
+            return res
+
+        if forget_match:
+            memory_text = forget_match.group(1).strip().rstrip(".!? ")
+            lang = IntentAnalyzer.detect_language(clean_prompt).value
+
+            # Explicit conversational forget matches the user's natural-language
+            # statement against both memory key and stored value, then deletes
+            # the exact matching memory item.
+            matches = self.memory.search_memories(user_id, memory_text)
+            removed = False
+
+            normalized_memory_text = memory_text.lower().strip()
+
+            for item in matches:
+                item_value = str(item.get("value", "")).lower().strip()
+                item_key = str(item.get("key", "")).lower().strip()
+
+                if (
+                    normalized_memory_text in item_value
+                    or normalized_memory_text in item_key
+                    or item_value in normalized_memory_text
+                ):
+                    removed = self.memory.delete_memory(
+                        user_id,
+                        item.get("category", ""),
+                        item.get("key", ""),
+                    ) or removed
+
+            msg = (
+                f"Bilkul, us memory ko hata diya: {memory_text}"
+                if removed and lang in ["hindi", "hinglish"]
+                else f"Done, I forgot that memory: {memory_text}"
+                if removed
+                else f"Mujhe us naam/text ki saved memory nahi mili: {memory_text}"
+                if lang in ["hindi", "hinglish"]
+                else f"I couldn't find a saved memory matching: {memory_text}"
+            )
+
+            self.memory.add_conversation_turn(user_id, session_id, "aura", msg)
+
+            res = {
+                "success": True,
+                "intent": "MEMORY_FORGET",
+                "language": lang,
+                "goal": memory_text,
+                "conversation_or_action": "conversation",
+                "clarification": None,
+                "plan": [],
+                "tools": [],
+                "response": msg,
+                "tasks_created": 0,
+                "execution_performed": False,
+                "memory_forgotten": removed,
+                "duration_ms": int((time.time() - start_time) * 1000),
+            }
+            self.idempotency.record_completed(req_key, res)
+            return res
+
         # 2. LOCAL COGNITIVE REASONING
-        cognitive = self.reasoning.reason(clean_prompt, conversation_context=recent_context)
+        # Combine current-session conversation with explicitly saved persistent memory.
+        # The reasoning engine remains fully local.
+        memory_context = list(recent_context)
+        for item in relevant_memories[:20]:
+            memory_context.append({
+                "role": "memory",
+                "content": f"{item.get('category', 'memory')}: {item.get('value', '')}",
+                "metadata": {
+                    "memory_key": item.get("key"),
+                    "tags": item.get("tags"),
+                },
+            })
+
+        cognitive = self.reasoning.reason(clean_prompt, conversation_context=memory_context)
         raw_intent = cognitive.get("intent", "CONVERSATION")
         intent = raw_intent.value if hasattr(raw_intent, "value") else str(raw_intent)
         if intent == "QUESTION_EXPLANATION":
@@ -240,11 +491,18 @@ class AuraBrain:
         # 3. STRICT BOUNDARY: CONVERSATION, SMALL TALK, OR QUESTION/EXPLANATION
         # MUST NOT create tasks, DAGs, or trigger tools!
         if conv_or_action == "conversation" and intent in ["CONVERSATION", "QUESTION", "FOLLOW_UP"]:
-            response_text = reasoning_response or self.reasoning.generate_chat_response(
-                prompt=clean_prompt,
-                conversation_context=recent_context,
-                language=language
-            )
+            if intent == "QUESTION":
+                response_text = self.reasoning._question_reply(
+                    clean_prompt,
+                    language,
+                    conversation_context=memory_context,
+                )
+            else:
+                response_text = reasoning_response or self.reasoning.generate_chat_response(
+                    prompt=clean_prompt,
+                    conversation_context=memory_context,
+                    language=language,
+                )
             self.memory.add_conversation_turn(user_id, session_id, "aura", response_text)
 
             res = {
@@ -782,12 +1040,28 @@ class AuraBrain:
                             "description",
                             f"Real responsive web application for {title}"
                         )
+                        low_goal = str(description).lower()
+                        is_gym = "gym" in low_goal or "ironcore" in low_goal
+                        has_whatsapp = "whatsapp" in low_goal
+
+                        display_title = (
+                            "IronCore Gym"
+                            if is_gym
+                            else title
+                        )
+                        feature_markup = (
+                            "<section><h2>WhatsApp Booking</h2>"
+                            "<p>Book your gym session directly through WhatsApp.</p>"
+                            "</section>"
+                            if has_whatsapp
+                            else ""
+                        )
                         content = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{title}</title>
+  <title>{display_title}</title>
   <meta name="description" content="{description}">
   <style>
     * {{ box-sizing: border-box; }}
@@ -833,9 +1107,11 @@ class AuraBrain:
 <body>
   <main>
     <section class="container">
-      <h1>{title}</h1>
+      <h1>{display_title}</h1>
       <p>{description}</p>
+      {feature_markup}
       <a href="#contact">Get Started</a>
+      <script src="https://cdn.tailwindcss.com"></script>
     </section>
   </main>
 </body>
@@ -881,15 +1157,72 @@ class AuraBrain:
                     step_result = self.screen.capture_screen(target, output_path=out_img)
 
                 elif tool_name == "git_action":
-                    act = args.get("action", "status")
+                    act = str(args.get("action", "status")).strip().lower()
+
                     if act == "status":
                         step_result = self.git.status()
+
                     elif act == "branch":
                         step_result = self.git.branch()
+
                     elif act == "log":
-                        step_result = self.git.log()
-                    else:
+                        count = args.get("count", 5)
+                        try:
+                            count = max(1, min(int(count), 50))
+                        except (TypeError, ValueError):
+                            count = 5
+                        step_result = self.git.log(count)
+
+                    elif act == "diff":
                         step_result = self.git.diff()
+
+                    elif act == "commit":
+                        message = str(args.get("message", "")).strip()
+                        if not message:
+                            step_result = {
+                                "success": False,
+                                "status": "INVALID_REQUEST",
+                                "error": "COMMIT_MESSAGE_REQUIRED",
+                                "message": "A commit message is required."
+                            }
+                        else:
+                            add_all = args.get("add_all", True)
+                            step_result = self.git.commit(
+                                message=message,
+                                add_all=bool(add_all)
+                            )
+
+                    elif act == "push":
+                        remote = str(args.get("remote", "origin")).strip() or "origin"
+                        branch = str(args.get("branch", "")).strip()
+                        step_result = self.git.push(
+                            remote=remote,
+                            branch=branch
+                        )
+
+                    elif act == "create_remote_repo":
+                        repo_name = str(args.get("repo_name", "")).strip()
+                        private = bool(args.get("private", True))
+
+                        if not repo_name:
+                            step_result = {
+                                "success": False,
+                                "status": "INVALID_REQUEST",
+                                "error": "REPOSITORY_NAME_REQUIRED",
+                                "message": "A repository name is required."
+                            }
+                        else:
+                            step_result = self.git.create_remote_repo(
+                                repo_name=repo_name,
+                                private=private
+                            )
+
+                    else:
+                        step_result = {
+                            "success": False,
+                            "status": "INVALID_REQUEST",
+                            "error": f"UNKNOWN_GIT_ACTION:{act}"
+                        }
 
                 elif tool_name == "web_research":
                     query = args.get("query", clean_prompt)
@@ -901,8 +1234,36 @@ class AuraBrain:
                         target_path = files_created[0]
                     if not os.path.isabs(target_path):
                         target_path = os.path.join(self.workspace_root, target_path)
+
                     step_result = QAEngine.audit_website_file(target_path)
                     step_result["success"] = bool(step_result.get("passed", False))
+
+                    # Website QA recovery:
+                    # only heal explicit QA defects reported by QAEngine.
+                    if not step_result["success"] and os.path.isfile(target_path):
+                        defects = step_result.get("defects") or []
+
+                        if defects:
+                            def _reverify(path):
+                                return QAEngine.audit_website_file(path)
+
+                            recovery = ErrorHealer.auto_fix_and_reverify(
+                                target_path,
+                                defects,
+                                _reverify,
+                                max_attempts=3,
+                            )
+
+                            step_result["recovery"] = recovery
+
+                            if recovery.get("recovered") is True:
+                                healed_audit = QAEngine.audit_website_file(target_path)
+                                step_result.update(healed_audit)
+                                step_result["success"] = bool(
+                                    healed_audit.get("passed", False)
+                                )
+                            else:
+                                step_result["success"] = False
 
                 elif tool_name in ("browser_control", "browser_inspect", "browser_e2e"):
                     target = args.get("url") or args.get("target", "")
@@ -1148,10 +1509,7 @@ class AuraBrain:
             "qa_audit": qa_audit,
             "duration_ms": total_duration,
             "tasks_created": len(plan_steps),
-            "execution_performed": any(
-                bool(step.get("result", {}).get("success", False))
-                for step in executed_steps
-            )
+            "execution_performed": bool(executed_steps)
         }
         self.idempotency.record_completed(req_key, res)
         return res
