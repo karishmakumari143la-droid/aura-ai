@@ -269,12 +269,11 @@ class AuraReasoning:
         """
         Detect explicit user intent for background execution.
 
-        Conservative: requires explicit background language and a
-        background-execution verb/context. It does not grant permission.
+        This is deliberately conservative. It identifies explicit
+        background intent only; it does not grant permissions or decide
+        whether the requested work is executable in the durable runtime.
         """
-        import re
-
-        low = " ".join(text.strip().lower().split())
+        low = text.strip().lower()
 
         explicit_phrases = [
             "run this in background",
@@ -284,48 +283,19 @@ class AuraReasoning:
             "background me chalao",
             "background mein run karo",
             "background me run karo",
-            "background mein execute karo",
-            "background me execute karo",
-            "background mein execute kar do",
-            "background me execute kar do",
+            "background mein kar do",
+            "background me kar do",
             "background task",
             "background job",
-            "background mein",
-            "background me",
-            "in the background",
             "continue in background",
-            "continue in the background",
+            "keep working in background",
             "keep running after i close",
-            "keep running after I close",
-            "while I am away",
+            "continue after i close",
+            "while i am away",
             "while i'm away",
         ]
 
-        if any(phrase in low for phrase in explicit_phrases):
-            return True
-
-        # Natural Hinglish: "background mein terminal command ... chalao"
-        # / "background me command ... run karo"
-        has_background = bool(re.search(r"\\bbackground\\s+(?:mein|me)\\b", low))
-        has_execution_verb = bool(
-            re.search(
-                r"\\b(?:chalao|chala|chalana|run|execute|start|start\\s+kar(?:o|na)?|"
-                r"run\\s+kar(?:o|na)?|execute\\s+kar(?:o|na)?)\\b",
-                low,
-            )
-        )
-
-        return has_background and has_execution_verb
-
-
-    def get_diagnostics(self) -> Dict[str, Any]:
-        return {
-            "engine": self.engine,
-            "version": self.version,
-            "external_provider": False,
-            "api_key_required": False,
-            "status": "WORKING",
-        }
+        return any(phrase in low for phrase in explicit_phrases)
 
     @staticmethod
     def _extract_website_title(goal: str) -> str:
@@ -343,7 +313,6 @@ class AuraReasoning:
             return "Portfolio Website"
 
         return "AURA Website"
-
 
     def plan_execution_steps(self, goal: str) -> List[Dict[str, Any]]:
         low = goal.lower()
@@ -497,47 +466,10 @@ class AuraReasoning:
             or "execute a command" in low
             or low.startswith("terminal ")
             or low.startswith("run ")
-
-            # Explicit Hindi/Hinglish background terminal commands.
-            or low.startswith("background mein chalao:")
-            or low.startswith("background me chalao:")
-            or low.startswith("background mein chalao ")
-            or low.startswith("background me chalao ")
-            or low.startswith("background mein run karo:")
-            or low.startswith("background me run karo:")
-            or low.startswith("background mein run karo ")
-            or low.startswith("background me run karo ")
-            or low.startswith("background mein kar do:")
-            or low.startswith("background me kar do:")
-            or low.startswith("background mein kar do ")
-            or low.startswith("background me kar do ")
         ):
             command = goal.strip()
 
             prefixes = [
-                # Explicit background execution phrases must be stripped
-                # before the generic "run" prefix. Otherwise:
-                # "Run this in background: npm test"
-                # becomes "this in background: npm test".
-                "run this in background:",
-                "run it in background:",
-                "run in background:",
-                "run this in background",
-                "run it in background",
-                "run in background",
-                "background mein chalao:",
-                "background me chalao:",
-                "background mein chalao",
-                "background me chalao",
-                "background mein run karo:",
-                "background me run karo:",
-                "background mein run karo",
-                "background me run karo",
-                "background mein kar do:",
-                "background me kar do:",
-                "background mein kar do",
-                "background me kar do",
-
                 "run terminal command",
                 "execute terminal command",
                 "run the terminal command",
@@ -579,49 +511,6 @@ class AuraReasoning:
 
             return steps
 
-        # Natural background terminal execution
-        # Examples:
-        # "background mein terminal command printf TEST chalao"
-        # "background me command printf TEST run karo"
-        if self._is_background_request(low):
-            command = ""
-
-            prefixes = [
-                "background mein terminal command",
-                "background me terminal command",
-                "background mein command",
-                "background me command",
-            ]
-
-            for prefix in prefixes:
-                if low.startswith(prefix):
-                    command = goal[len(prefix):].strip()
-                    break
-
-            if command:
-                command = re.sub(
-                    r"\s+aur\s+complete\s+hone\s+tak\s+continue\s+karo.*$",
-                    "",
-                    command,
-                    flags=re.IGNORECASE,
-                ).strip()
-
-                command = re.sub(
-                    r"\s+(?:chalao|chala|run\s+karo|execute\s+karo|kar\s+do)\s*$",
-                    "",
-                    command,
-                    flags=re.IGNORECASE,
-                ).strip()
-
-            if command:
-                steps.append({
-                    "step_id": 1,
-                    "tool": "terminal_execute",
-                    "description": "Execute the requested terminal command in the background",
-                    "args": {"command": command},
-                    "verification": "Verify the background terminal command completed successfully",
-                })
-                return steps
         # Code
         if any(x in low for x in [
             "code",
@@ -701,6 +590,25 @@ class AuraReasoning:
 
         return steps
 
+    def generate_chat_response(
+        self,
+        prompt: str,
+        conversation_context: List[Dict[str, Any]] | None = None,
+        language: str = "english",
+    ) -> str:
+
+        low = prompt.lower().strip()
+
+        return self._conversation_reply(low, language)
+
+    def get_diagnostics(self) -> Dict[str, Any]:
+        return {
+            "engine": self.engine,
+            "version": self.version,
+            "external_provider": False,
+            "api_key_required": False,
+            "status": "WORKING",
+        }
 
     def _contains_action(self, text: str) -> bool:
         action_words = [

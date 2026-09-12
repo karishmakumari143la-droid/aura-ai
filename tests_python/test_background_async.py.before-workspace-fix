@@ -1,6 +1,6 @@
 import os
+import sys
 import time
-from pathlib import Path
 
 from python_brain.runtime.background import (
     BackgroundTaskManager,
@@ -9,17 +9,13 @@ from python_brain.runtime.background import (
 
 
 def test_durable_dispatch_runs_asynchronously(tmp_path):
-    data_dir = tmp_path / "data"
+    db_path = str(tmp_path / "async.db")
+    workspace_root = str(tmp_path / "workspace")
+    os.makedirs(workspace_root, exist_ok=True)
 
-    # Use a workspace inside the repository so AURA's existing
-    # workspace security policy accepts the execution path.
-    workspace_root = Path("/workspaces/aura-ai/aura_workspace")
-    workspace_root.mkdir(parents=True, exist_ok=True)
+    manager = BackgroundTaskManager(db_path=db_path)
 
-    manager = BackgroundTaskManager(
-        db_path=str(data_dir / "async.db")
-    )
-
+    # The real dispatcher now launches an independent worker process.
     dispatcher = DurableTaskDispatcher(
         manager=manager,
         brain=None,
@@ -31,7 +27,7 @@ def test_durable_dispatch_runs_asynchronously(tmp_path):
         task_type="terminal_command",
         payload={
             "command": "printf 'AURA_ASYNC_OK\\n'",
-            "cwd": str(workspace_root),
+            "cwd": workspace_root,
         },
     )
 
@@ -44,6 +40,8 @@ def test_durable_dispatch_runs_asynchronously(tmp_path):
     assert returned_id == task_id
     assert elapsed < 0.20
 
+    # dispatch_task_async() must return before the independent worker
+    # finishes the task.
     task = manager.get_task(task_id)
     assert task is not None
     assert task["status"] in {"QUEUED", "RUNNING", "COMPLETED"}

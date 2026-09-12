@@ -1840,14 +1840,7 @@ async function startServer() {
 
   app.post('/api/brain/turn', async (req: Request, res: Response) => {
     try {
-      const {
-        prompt,
-        session_id,
-        interactive_confirm,
-        idempotency_key,
-        scope_id,
-        grant_id
-      } = req.body;
+      const { prompt, session_id, interactive_confirm, idempotency_key } = req.body;
       if (!prompt) {
         return res.status(400).json({ success: false, error: 'prompt is required' });
       }
@@ -1869,9 +1862,7 @@ async function startServer() {
         user_id: uid,
         session_id: session_id || 'active_session',
         interactive_confirm: !!interactive_confirm,
-        idempotency_key,
-        scope_id,
-        grant_id
+        idempotency_key
       });
 
       res.json(result);

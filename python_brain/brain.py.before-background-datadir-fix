@@ -378,78 +378,6 @@ class AuraBrain:
                     background_command = candidate_command
 
             if background_command:
-                # Background execution has a stricter command policy than
-                # foreground terminal execution. Reject shell chaining,
-                # pipelines, redirection, and command substitution before
-                # consuming permission or creating a durable task.
-                from .security.policy import SecurityPolicy
-
-                background_safe, background_safety_error = (
-                    SecurityPolicy.validate_background_command(
-                        background_command
-                    )
-                )
-
-                if not background_safe:
-                    if language in ("hindi", "hinglish"):
-                        background_safety_response = (
-                            "Main ise background mein safely nahi chala sakti: "
-                            f"{background_safety_error}"
-                        )
-                    else:
-                        background_safety_response = (
-                            "I can't run this in the background safely: "
-                            f"{background_safety_error}"
-                        )
-
-                    self.memory.add_conversation_turn(
-                        user_id,
-                        session_id,
-                        "aura",
-                        background_safety_response,
-                    )
-
-                    background_safety_res = {
-                        "success": False,
-                        "intent": "ACTION_REQUEST",
-                        "language": language,
-                        "goal": goal,
-                        "conversation_or_action": "action",
-                        "clarification": None,
-                        "plan": plan_list if "plan_list" in locals() else [
-                            s.get("description", "")
-                            for s in plan_steps
-                        ],
-                        "tools": ["terminal_execute"],
-                        "response": background_safety_response,
-                        "background_requested": True,
-                        "background_task": None,
-                        "status": "BLOCKED",
-                        "requires_confirmation": False,
-                        "permission_state": "blocked",
-                        "permission_message": background_safety_error,
-                        "scope_id": (
-                            scope_id
-                            or f"background:{user_id}:{req_key}"
-                        ),
-                        "plan_steps": plan_steps,
-                        "executed_steps": [],
-                        "files_created": [],
-                        "qa_audit": {},
-                        "duration_ms": int(
-                            (time.time() - start_time) * 1000
-                        ),
-                        "tasks_created": 0,
-                        "execution_performed": False,
-                        "error": "UNSAFE_BACKGROUND_COMMAND",
-                    }
-
-                    self.idempotency.record_completed(
-                        req_key,
-                        background_safety_res,
-                    )
-                    return background_safety_res
-
                 from .runtime.background import (
                     BackgroundTaskManager,
                     DurableTaskDispatcher,
@@ -548,9 +476,7 @@ class AuraBrain:
                     self.idempotency.record_completed(req_key, res)
                     return res
 
-                task_manager = BackgroundTaskManager(
-                    db_path=os.path.join(self.data_dir, "aura_tasks.db")
-                )
+                task_manager = BackgroundTaskManager()
                 dispatcher = DurableTaskDispatcher(
                     manager=task_manager,
                     brain=self,

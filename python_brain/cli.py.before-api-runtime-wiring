@@ -26,24 +26,8 @@ def main():
         sys.exit(1)
 
     action = payload.get("action", "turn")
-
-    # Use one shared persistent runtime configuration.
-    # Explicit payload values win; environment variables provide
-    # the server/runtime defaults.
-    workspace = (
-        payload.get("workspace_root")
-        or os.environ.get("AURA_WORKSPACE_ROOT")
-    )
-
-    data_dir = (
-        payload.get("data_dir")
-        or os.environ.get("AURA_DATA_DIR")
-    )
-
-    brain = AuraBrain(
-        workspace_root=workspace,
-        data_dir=data_dir,
-    )
+    workspace = payload.get("workspace_root")
+    brain = AuraBrain(workspace_root=workspace)
 
     if action == "status":
         status = brain.get_system_status()
@@ -68,15 +52,7 @@ def main():
 
         from .security.permissions import PermissionKey
 
-        task_db_path = os.path.join(
-            brain.data_dir,
-            "aura_tasks.db",
-        )
-
-        task_manager = BackgroundTaskManager(
-            db_path=task_db_path,
-        )
-
+        task_manager = BackgroundTaskManager()
         dispatcher = DurableTaskDispatcher(
             manager=task_manager,
             brain=brain,
@@ -126,10 +102,7 @@ def main():
                 user_id=user_id,
                 title=title,
                 task_type="terminal_command",
-                payload={
-                    "command": command,
-                    "cwd": brain.workspace_root,
-                },
+                payload={"command": command},
             )
 
             dispatcher.dispatch_task_async(task_id)
@@ -170,23 +143,8 @@ def main():
             }))
             return
 
-        data_dir = (
-            payload.get("data_dir")
-            or os.environ.get("AURA_DATA_DIR")
-            or brain.data_dir
-        )
-
-        task_manager = BackgroundTaskManager(
-            db_path=os.path.join(
-                data_dir,
-                "aura_tasks.db",
-            )
-        )
-
-        task = task_manager.get_task(
-            task_id,
-            user_id=user_id,
-        )
+        task_manager = BackgroundTaskManager()
+        task = task_manager.get_task(task_id, user_id=user_id)
 
         if not task:
             print(json.dumps({

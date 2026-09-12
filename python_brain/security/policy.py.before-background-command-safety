@@ -38,47 +38,6 @@ class SecurityPolicy:
         return True, None
 
     @staticmethod
-    def validate_background_command(command: str) -> Tuple[bool, Optional[str]]:
-        """
-        Validate a command specifically for unattended/background execution.
-
-        Background execution is intentionally stricter than foreground
-        terminal execution because the user may no longer be present to
-        observe or approve chained shell operations.
-        """
-        if not isinstance(command, str) or not command.strip():
-            return False, "Background command must be a non-empty string."
-
-        cmd = command.strip()
-
-        # Background tasks must remain a single bounded command.
-        # Do not allow shell chaining, pipelines, redirection, or command
-        # substitution in unattended execution.
-        forbidden_patterns = [
-            (r"&&", "command chaining (&&)"),
-            (r"\|\|", "command fallback chaining (||)"),
-            (r";", "command separator (;)"),
-            (r"\|", "pipeline (|)"),
-            (r"[<>]", "shell redirection"),
-            (r"\$\(", "command substitution ($())"),
-            (r"`", "command substitution (backticks)"),
-        ]
-
-        for pattern, description in forbidden_patterns:
-            if re.search(pattern, cmd):
-                return (
-                    False,
-                    f"Background execution blocked: {description} is not allowed.",
-                )
-
-        # Reuse the existing destructive-command policy as a second layer.
-        valid, error = SecurityPolicy.validate_command(cmd)
-        if not valid:
-            return False, error
-
-        return True, None
-
-    @staticmethod
     def redact_secrets(text: str) -> str:
         if not text:
             return ""

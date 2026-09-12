@@ -1,5 +1,5 @@
+import os
 import time
-from pathlib import Path
 
 from python_brain.runtime.background import (
     BackgroundTaskManager,
@@ -9,11 +9,10 @@ from python_brain.runtime.background import (
 
 def test_restart_recovery_then_async_dispatch(tmp_path):
     db_path = str(tmp_path / "restart_async.db")
+    workspace_root = str(tmp_path / "workspace")
+    os.makedirs(workspace_root, exist_ok=True)
 
-    # Keep execution inside AURA's configured workspace security boundary.
-    workspace_root = Path("/workspaces/aura-ai/aura_workspace")
-    workspace_root.mkdir(parents=True, exist_ok=True)
-
+    # Runtime before interruption.
     manager_before = BackgroundTaskManager(db_path=db_path)
 
     task_id = manager_before.create_durable_task(
@@ -22,7 +21,7 @@ def test_restart_recovery_then_async_dispatch(tmp_path):
         task_type="terminal_command",
         payload={
             "command": "printf 'AURA_RECOVERED_OK\\n'",
-            "cwd": str(workspace_root),
+            "cwd": workspace_root,
         },
     )
 
@@ -37,6 +36,8 @@ def test_restart_recovery_then_async_dispatch(tmp_path):
     assert before is not None
     assert before["status"] == "RUNNING"
 
+    # Simulated process restart: create a fresh manager instance
+    # pointing at the same persistent SQLite database.
     manager_after = BackgroundTaskManager(db_path=db_path)
 
     recovered = manager_after.recover_interrupted_tasks()
@@ -54,6 +55,8 @@ def test_restart_recovery_then_async_dispatch(tmp_path):
         for entry in recovery_logs
     )
 
+    # Fresh dispatcher represents the restarted runtime.
+    # The actual execution happens in an independent Python worker.
     dispatcher = DurableTaskDispatcher(
         manager=manager_after,
         brain=None,
@@ -66,6 +69,7 @@ def test_restart_recovery_then_async_dispatch(tmp_path):
     assert returned_id == task_id
     assert elapsed < 0.20
 
+    # Wait for the independent worker to finish.
     deadline = time.monotonic() + 5.0
 
     while time.monotonic() < deadline:

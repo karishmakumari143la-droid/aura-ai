@@ -1,0 +1,333 @@
+"""
+AURA AI — Local Reasoning Engine
+
+No external LLM/API/provider dependency.
+Handles:
+- intent understanding
+- language detection
+- conversation
+- clarification
+- deterministic action planning
+- tool selection
+"""
+
+import re
+from typing import Any, Dict, List
+
+
+class AuraReasoning:
+
+    ALLOWED_TOOLS = [
+        "filesystem_write",
+        "filesystem_read",
+        "terminal_execute",
+        "code_runner",
+        "browser_screenshot",
+        "browser_inspect",
+        "browser_control",
+        "browser_e2e",
+        "git_action",
+        "web_research",
+        "qa_verify_site",
+    ]
+
+    def __init__(self):
+        self.engine = "AURA_LOCAL_REASONING"
+        self.version = "1.0.0"
+
+    @staticmethod
+    def detect_language(text: str) -> str:
+        text = text.lower()
+
+        hindi_words = [
+            "hai", "hain", "mujhe", "mera", "meri", "mere",
+            "kya", "kaise", "banao", "bana", "karna",
+            "karo", "chahiye", "aap", "tum", "yeh", "yah",
+            "website", "mein", "me", "se", "ke", "ki"
+        ]
+
+        devanagari = bool(re.search(r"[\u0900-\u097F]", text))
+
+        if devanagari:
+            return "hindi"
+
+        hindi_count = sum(
+            1 for word in hindi_words
+            if re.search(r"\b" + re.escape(word) + r"\b", text)
+        )
+
+        # Mixed Latin-script Hindi should be Hinglish even when
+        # the phrase contains only one strong Hindi marker.
+        hinglish_phrases = [
+            "kaise ho", "kya hai", "kya kar", "kya karo",
+            "batao", "meri", "mera", "mujhe", "aapko",
+            "kar do", "bana do", "bata do", "theek hai",
+            "haan", "nahi", "nahin", "chahiye"
+        ]
+
+        if hindi_count >= 2 or any(phrase in text for phrase in hinglish_phrases):
+            return "hinglish"
+
+        return "english"
+
+    def reason(
+        self,
+        prompt: str,
+        conversation_context: List[Dict[str, Any]] | None = None,
+    ) -> Dict[str, Any]:
+
+        text = prompt.strip()
+        low = text.lower()
+        language = self.detect_language(text)
+
+        # -----------------------------
+        # CONVERSATION
+        # -----------------------------
+
+        greetings = [
+            "hello",
+            "hi",
+            "hey",
+            "namaste",
+            "good morning",
+            "good evening",
+            "good afternoon",
+            "kaise ho",
+            "how are you",
+            "kya haal",
+        ]
+
+        if any(x in low for x in greetings) and not self._contains_action(low):
+            return {
+                "intent": "CONVERSATION",
+                "language": language,
+                "goal": "Conversation",
+                "conversation_or_action": "conversation",
+                "clarification": None,
+                "plan": [],
+                "tools": [],
+                "response": self._conversation_reply(low, language),
+            }
+
+        # Language preference is conversational, never an executable action.
+        language_preferences = [
+            "hindi mein baat karo",
+            "hindi me baat karo",
+            "english mein baat karo",
+            "english me baat karo",
+            "hinglish mein baat karo",
+            "hinglish me baat karo",
+            "हिंदी में बात करो",
+            "हिंदी में बात करें",
+        ]
+
+        if any(x in low or x in text for x in language_preferences):
+            requested_language = (
+                "hindi"
+                if "hindi" in low or "हिंदी" in text
+                else "hinglish"
+                if "hinglish" in low
+                else "english"
+            )
+            response = {
+                "hindi": "Bilkul. Ab main aapse Hindi mein baat karungi.",
+                "hinglish": "Bilkul. Ab main aapse natural Hinglish mein baat karungi.",
+                "english": "Sure. I’ll continue speaking with you in English.",
+            }[requested_language]
+
+            return {
+                "intent": "CONVERSATION",
+                "language": requested_language,
+                "goal": "Language preference",
+                "conversation_or_action": "conversation",
+                "clarification": None,
+                "plan": [],
+                "tools": [],
+                "response": response,
+            }
+
+        # Gratitude / acknowledgement is conversational, never a task.
+        gratitude = [
+            "shukriya",
+            "dhanyavaad",
+            "thanks",
+            "thank you",
+            "thankyou",
+            "thx",
+            "bahut accha",
+            "bahut acha",
+            "great",
+            "perfect",
+            "okay thanks",
+            "ok thanks",
+        ]
+
+        if any(x == low.strip(" .!?") or x in low for x in gratitude):
+            return {
+                "intent": "CONVERSATION",
+                "language": language,
+                "goal": "Acknowledgement",
+                "conversation_or_action": "conversation",
+                "clarification": None,
+                "plan": [],
+                "tools": [],
+                "response": self._conversation_reply(low, language),
+            }
+
+        # -----------------------------
+        # QUESTIONS
+        # -----------------------------
+
+        question_starts = [
+            "what is",
+            "what are",
+            "why is",
+            "why are",
+            "how does",
+            "how do",
+            "explain",
+            "define",
+            "who made you",
+            "who created you",
+            "who built you",
+            "who are you",
+            "tell me about yourself",
+            "tell me a joke",
+            "joke sunao",
+            "joke batao",
+            "make me laugh",
+            "kya hai",
+            "kya hota hai",
+            "kyun",
+            "kaise kaam",
+        ]
+
+        if any(x in low for x in question_starts) and not self._contains_action(low):
+            return {
+                "intent": "QUESTION",
+                "language": language,
+                "goal": text,
+                "conversation_or_action": "conversation",
+                "clarification": None,
+                "plan": [],
+                "tools": [],
+                "response": self._question_reply(text, language),
+            }
+
+        # -----------------------------
+        # AMBIGUOUS REQUEST
+        # -----------------------------
+
+        vague = [
+            "do something",
+            "kuch karo",
+            "kuch banao",
+            "something karo",
+            "help me",
+            "help karo",
+        ]
+
+        if any(x in low for x in vague) and not self._contains_action(low):
+            msg = (
+                "Aap kya karwana chahte hain? Project, website, coding, research ya koi specific task bataiye."
+                if language in ("hindi", "hinglish")
+                else
+                "What would you like me to work on? Tell me the project, website, coding task, research, or specific action."
+            )
+
+            return {
+                "intent": "CLARIFICATION",
+                "language": language,
+                "goal": text,
+                "conversation_or_action": "conversation",
+                "clarification": msg,
+                "plan": [],
+                "tools": [],
+                "response": msg,
+            }
+
+        # -----------------------------
+        # ACTION
+        # -----------------------------
+
+        plan = self.plan_execution_steps(text)
+
+        return {
+            "intent": "ACTION_REQUEST",
+            "language": language,
+            "goal": text,
+            "conversation_or_action": "action",
+            "clarification": None,
+            "plan": [x["description"] for x in plan],
+            "tools": list(dict.fromkeys(x["tool"] for x in plan)),
+            "background_requested": self._is_background_request(text),
+            "response": self._action_reply(text, language, len(plan)),
+        }
+
+    @staticmethod
+    def _is_background_request(text: str) -> bool:
+        """
+        Detect explicit user intent for background execution.
+
+        Conservative: requires explicit background language and a
+        background-execution verb/context. It does not grant permission.
+        """
+        import re
+
+        low = " ".join(text.strip().lower().split())
+
+        explicit_phrases = [
+            "run this in background",
+            "run it in background",
+            "run in background",
+            "background mein chalao",
+            "background me chalao",
+            "background mein run karo",
+            "background me run karo",
+            "background mein execute karo",
+            "background me execute karo",
+            "background mein execute kar do",
+            "background me execute kar do",
+            "background task",
+            "background job",
+            "background mein",
+            "background me",
+            "in the background",
+            "continue in background",
+            "continue in the background",
+            "keep running after i close",
+            "keep running after I close",
+            "while I am away",
+            "while i'm away",
+        ]
+
+        if any(phrase in low for phrase in explicit_phrases):
+            return True
+
+        # Natural Hinglish: "background mein terminal command ... chalao"
+        # / "background me command ... run karo"
+        has_background = bool(re.search(r"\\bbackground\\s+(?:mein|me)\\b", low))
+        has_execution_verb = bool(
+            re.search(
+                r"\\b(?:chalao|chala|chalana|run|execute|start|start\\s+kar(?:o|na)?|"
+                r"run\\s+kar(?:o|na)?|execute\\s+kar(?:o|na)?)\\b",
+                low,
+            )
+        )
+
+        return has_background and has_execution_verb
+
+    def get_diagnostics(self) -> Dict[str, Any]:
+        return {
+            "engine": self.engine,
+            "version": self.version,
+            "external_provider": False,
+            "api_key_required": False,
+            "status": "WORKING",
+        }
+
+    def _action_reply(self, prompt: str, language: str, count: int) -> str:
+        if language in ("hindi", "hinglish"):
+            return f"Samajh gaya. Main is kaam ke liye {count} execution step{'s' if count != 1 else ''} prepare kar raha hoon. Execution ke baad result verify kiya jayega."
+
+        return f"Understood. I prepared {count} execution step{'s' if count != 1 else ''}. The result will be verified after execution."

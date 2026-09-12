@@ -471,100 +471,19 @@ class DurableTaskDispatcher:
 
     def dispatch_task_async(self, task_id: str) -> str:
         """
-        Dispatch a persisted allowlisted task in an independent process.
+        Dispatch a persisted task without blocking the API request.
 
-        The worker receives only the durable task ID plus the exact
-        SQLite database path. Execution details are reconstructed from
-        the persisted allowlisted task payload.
+        The task is already durable in SQLite before this method is called.
+        The worker thread only receives the task_id and reconstructs the
+        actual operation from the persisted allowlisted payload.
         """
-        import subprocess
-        import sys
-
-        task = self.manager.get_task(task_id)
-
-        if not task:
-            return task_id
-
-        if task.get("status") != "QUEUED":
-            return task_id
-
-        env = os.environ.copy()
-
-        # Pass the exact database used by this manager.
-        # Never assume the filename is aura_tasks.db.
-        manager_db_path = getattr(self.manager, "db_path", None)
-
-        if manager_db_path:
-            manager_db_path = os.path.abspath(str(manager_db_path))
-            env["AURA_TASK_DB_PATH"] = manager_db_path
-            env["AURA_DATA_DIR"] = os.path.dirname(manager_db_path)
-
-        # Normal production runtime supplies its authoritative
-        # workspace root through AuraBrain.
-        if self.brain is not None:
-            data_dir = getattr(self.brain, "data_dir", None)
-            workspace_root = getattr(self.brain, "workspace_root", None)
-
-            if data_dir:
-                env["AURA_DATA_DIR"] = str(data_dir)
-
-            if workspace_root:
-                env["AURA_WORKSPACE_ROOT"] = str(workspace_root)
-
-        # Isolated dispatcher instances may not have a Brain.
-        # In that case, derive the worker workspace from the already
-        # persisted terminal cwd. The terminal security policy still
-        # validates that path before execution.
-        elif task.get("task_type") == "terminal_command":
-            payload = task.get("payload")
-
-            if isinstance(payload, dict):
-                payload_cwd = payload.get("cwd")
-
-                if isinstance(payload_cwd, str) and payload_cwd.strip():
-                    env["AURA_WORKSPACE_ROOT"] = os.path.abspath(
-                        payload_cwd
-                    )
-
-        worker_log_dir = env.get("AURA_DATA_DIR") or os.getcwd()
-        os.makedirs(worker_log_dir, exist_ok=True)
-
-        worker_log_path = os.path.join(
-            worker_log_dir,
-            f"aura_worker_{task_id}.log",
+        thread = threading.Thread(
+            target=self.dispatch_task,
+            args=(task_id,),
+            daemon=True,
+            name=f"aura-durable-{task_id[:8]}",
         )
-
-        worker_log = open(
-            worker_log_path,
-            "a",
-            encoding="utf-8",
-        )
-
-        env["PYTHONUNBUFFERED"] = "1"
-
-        process = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "python_brain.runtime.background_worker",
-                task_id,
-            ],
-            cwd=os.getcwd(),
-            env=env,
-            stdin=subprocess.DEVNULL,
-            stdout=worker_log,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-            close_fds=True,
-        )
-
-        worker_log.write(
-            f"[AURA] Worker spawned pid={process.pid} "
-            f"task_id={task_id}\n"
-        )
-        worker_log.flush()
-        worker_log.close()
-
+        thread.start()
         return task_id
 
     def _dispatch_task_locked(self, task_id: str) -> bool:
