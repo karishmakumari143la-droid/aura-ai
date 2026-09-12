@@ -758,6 +758,8 @@ export default function App() {
                   )}
                 </div>
               </div>
+
+              <AutomationsView userId={currentUser?.id || "default_user"} />
             </div>
           )}
 

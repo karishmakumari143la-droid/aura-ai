@@ -5,16 +5,33 @@ Exposes all brain orchestration, tools, voice, permissions, audit, and WebSocket
 
 import os
 import sys
+import hashlib
+import hmac
+import json
 from typing import Dict, Any, List, Optional
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query
+from fastapi import (
+    FastAPI,
+    WebSocket,
+    WebSocketDisconnect,
+    HTTPException,
+    Query,
+    Request,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from .brain import AuraBrain
-from .security.permissions import PermissionKey
+from .security.permissions import PermissionKey, PermissionState
 from .voice.service import VoiceService
 from .runtime.background import BackgroundTaskManager, DurableTaskDispatcher, RecurringWorkScheduler
 from .ws.events import event_dispatcher
+from .integrations.communication import CommunicationRegistry
+from .integrations.core import (
+    IntegrationManager,
+    IntegrationPermissionError,
+)
+from .integrations.whatsapp import WhatsAppAdapter
+from .integrations.communication_token_store import CommunicationCredentialStore
 
 app = FastAPI(
     title="AURA AI Central Intelligence Brain",
@@ -74,6 +91,32 @@ recurring_scheduler = RecurringWorkScheduler(
     task_manager=task_manager,
     dispatcher=durable_dispatcher,
 )
+
+# ============================================================
+# COMMUNICATION INTEGRATIONS
+# ============================================================
+
+communication_registry = CommunicationRegistry()
+
+communication_integration_manager = IntegrationManager(
+    registry=communication_registry,
+    permission_checker=brain.permissions,
+    audit_logger=brain.audit,
+)
+
+communication_credential_store = CommunicationCredentialStore(
+    db_path=os.path.join(
+        AURA_DATA_DIR,
+        "aura_communication_credentials.db",
+    )
+)
+
+whatsapp_adapter = WhatsAppAdapter(
+    credential_store=communication_credential_store,
+    provider="whatsapp_business",
+)
+
+communication_registry.register(whatsapp_adapter)
 
 # ============================================================
 # DURABLE BACKGROUND RUNTIME
@@ -160,6 +203,28 @@ class BackgroundTaskRequest(BaseModel):
     scope_id: Optional[str] = None
     grant_id: Optional[str] = None
 
+
+class WhatsAppSendRequest(BaseModel):
+    user_id: str = "default_user"
+    address: str
+    content: str
+    name: Optional[str] = None
+    confirmed: bool = False
+    scope_id: Optional[str] = None
+    grant_id: Optional[str] = None
+
+
+class WhatsAppConfigureRequest(BaseModel):
+    user_id: str = "default_user"
+    access_token: str
+    phone_number_id: str
+    api_version: str
+    base_url: Optional[str] = "https://graph.facebook.com"
+    confirmed: bool = False
+    grant_id: Optional[str] = None
+    scope_id: Optional[str] = None
+
+
 # ==================== ENDPOINTS ====================
 
 @app.get("/health")
@@ -189,6 +254,621 @@ async def chat_turn(req: ChatRequest):
         "success": res.get("success", True)
     })
     return res
+
+@app.post("/api/brain/communication/whatsapp/configure")
+def whatsapp_configure(req: WhatsAppConfigureRequest):
+    user_id = req.user_id.strip()
+
+    if not user_id:
+        raise HTTPException(status_code=400, detail="user_id is required")
+
+    scope_id = req.scope_id or f"whatsapp-configure:{user_id}"
+
+    allowed, msg, state = brain.permissions.check_permission(
+        user_id=user_id,
+        perm_key=PermissionKey.WHATSAPP_CONFIGURE.value,
+        interactive_confirm=req.confirmed,
+        grant_id=req.grant_id,
+        scope_id=scope_id,
+    )
+
+    if allowed and state == "grant":
+        consumed = brain.permissions.consume_grant(
+            grant_id=req.grant_id or "",
+            user_id=user_id,
+            perm_key=PermissionKey.WHATSAPP_CONFIGURE.value,
+            scope_id=scope_id,
+        )
+
+        if not consumed:
+            return {
+                "success": False,
+                "error": "Permission grant could not be consumed safely.",
+                "permission_state": "deny",
+                "status": "BLOCKED",
+                "scope_id": scope_id,
+            }
+
+    if not allowed:
+        waiting = state == "ask"
+        raise HTTPException(
+            status_code=409 if waiting else 403,
+            detail={
+                "code": "CONFIRMATION_REQUIRED" if waiting else "PERMISSION_DENIED",
+                "message": msg,
+                "permission_state": state,
+                "requires_confirmation": waiting,
+                "scope_id": scope_id,
+            },
+        )
+
+    access_token = req.access_token.strip()
+    phone_number_id = req.phone_number_id.strip()
+    api_version = req.api_version.strip()
+    base_url = (req.base_url or "").strip().rstrip("/")
+
+    if not access_token:
+        raise HTTPException(status_code=400, detail="access_token is required")
+
+    if not phone_number_id:
+        raise HTTPException(status_code=400, detail="phone_number_id is required")
+
+    if not api_version:
+        raise HTTPException(status_code=400, detail="api_version is required")
+
+    if not base_url:
+        raise HTTPException(status_code=400, detail="base_url is required")
+
+    # Validate the credentials against the real WhatsApp Cloud API.
+    # Never include the access token in audit parameters.
+    audit_parameters = {
+        "channel": "whatsapp",
+        "provider": "whatsapp_business",
+        "phone_number_id": phone_number_id,
+        "api_version": api_version,
+        "base_url": base_url,
+        "_scope_id": scope_id,
+    }
+
+    try:
+        response = whatsapp_adapter.http.get(
+            f"{base_url}/{api_version}/{phone_number_id}",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+            },
+            timeout=15,
+        )
+    except Exception:
+        brain.audit.log_action(
+            user_id=user_id,
+            action_type="INTEGRATION_CONFIGURE",
+            tool_name="whatsapp",
+            parameters=audit_parameters,
+            permission_state=PermissionState.ALLOW.value,
+            confirmed=req.confirmed,
+            success=False,
+            duration_ms=0,
+            error_message="WhatsApp Cloud API validation request failed.",
+            verification_status="FAILED",
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="WhatsApp Cloud API validation request failed.",
+        )
+
+    if not 200 <= response.status_code < 300:
+        try:
+            body = response.json()
+        except ValueError:
+            body = {}
+
+        provider_error = body.get("error") or {}
+        provider_message = provider_error.get("message")
+
+        brain.audit.log_action(
+            user_id=user_id,
+            action_type="INTEGRATION_CONFIGURE",
+            tool_name="whatsapp",
+            parameters=audit_parameters,
+            permission_state=PermissionState.ALLOW.value,
+            confirmed=req.confirmed,
+            success=False,
+            duration_ms=0,
+            error_message=provider_message
+            or "WhatsApp Cloud API rejected the credentials.",
+            verification_status="FAILED",
+        )
+
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "WHATSAPP_VALIDATION_FAILED",
+                "message": provider_message
+                or "WhatsApp Cloud API rejected the credentials.",
+            },
+        )
+
+    # Store only after real provider validation succeeds.
+    communication_credential_store.save(
+        user_id=user_id,
+        channel="whatsapp",
+        provider="whatsapp_business",
+        credentials={
+            "access_token": access_token,
+            "phone_number_id": phone_number_id,
+            "api_version": api_version,
+            "base_url": base_url,
+        },
+    )
+
+    brain.audit.log_action(
+        user_id=user_id,
+        action_type="INTEGRATION_CONFIGURE",
+        tool_name="whatsapp",
+        parameters=audit_parameters,
+        permission_state=PermissionState.ALLOW.value,
+        confirmed=req.confirmed,
+        success=True,
+        duration_ms=0,
+        verification_status="VERIFIED",
+    )
+
+    return {
+        "success": True,
+        "channel": "whatsapp",
+        "provider": "whatsapp_business",
+        "status": whatsapp_adapter.status(req.user_id),
+    }
+
+
+
+# ============================================================
+# WHATSAPP WEBHOOK
+# ============================================================
+
+def _whatsapp_webhook_verify_token() -> str:
+    return os.environ.get("WHATSAPP_WEBHOOK_VERIFY_TOKEN", "").strip()
+
+
+def _whatsapp_app_secret() -> str:
+    return os.environ.get("WHATSAPP_APP_SECRET", "").strip()
+
+
+def _verify_whatsapp_signature(raw_body: bytes, signature: str) -> bool:
+    """
+    Verify Meta's X-Hub-Signature-256 header.
+
+    Signature format:
+        sha256=<hex digest>
+    """
+    app_secret = _whatsapp_app_secret()
+    signature = str(signature or "").strip()
+
+    if not app_secret or not signature.startswith("sha256="):
+        return False
+
+    expected = hmac.new(
+        app_secret.encode("utf-8"),
+        raw_body,
+        hashlib.sha256,
+    ).hexdigest()
+
+    supplied = signature.split("=", 1)[1].strip()
+
+    return hmac.compare_digest(expected, supplied)
+
+
+def _extract_whatsapp_messages(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Extract inbound WhatsApp messages from a Meta webhook payload.
+
+    Only text messages are returned for automatic conversational processing.
+    """
+    messages: List[Dict[str, Any]] = []
+
+    for entry in payload.get("entry") or []:
+        for change in entry.get("changes") or []:
+            value = change.get("value") or {}
+
+            for message in value.get("messages") or []:
+                message_type = str(message.get("type", "")).strip().lower()
+
+                if message_type != "text":
+                    continue
+
+                message_id = str(message.get("id", "")).strip()
+                sender = str(message.get("from", "")).strip()
+                text_body = str(
+                    ((message.get("text") or {}).get("body")) or ""
+                ).strip()
+
+                metadata = value.get("metadata") or {}
+                phone_number_id = str(
+                    metadata.get("phone_number_id", "")
+                ).strip()
+
+                if not message_id or not sender or not text_body or not phone_number_id:
+                    continue
+
+                messages.append(
+                    {
+                        "message_id": message_id,
+                        "sender": sender,
+                        "content": text_body,
+                        "phone_number_id": phone_number_id,
+                    }
+                )
+
+    return messages
+
+
+@app.get("/api/brain/communication/whatsapp/webhook")
+def whatsapp_webhook_verify(
+    hub_mode: Optional[str] = Query(None, alias="hub.mode"),
+    hub_verify_token: Optional[str] = Query(None, alias="hub.verify_token"),
+    hub_challenge: Optional[str] = Query(None, alias="hub.challenge"),
+):
+    """
+    Meta webhook verification endpoint.
+    """
+    expected_token = _whatsapp_webhook_verify_token()
+
+    if (
+        hub_mode != "subscribe"
+        or not expected_token
+        or not hub_verify_token
+        or not hmac.compare_digest(
+            str(hub_verify_token),
+            expected_token,
+        )
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="WhatsApp webhook verification failed.",
+        )
+
+    if hub_challenge is None:
+        raise HTTPException(
+            status_code=400,
+            detail="hub.challenge is required.",
+        )
+
+    return int(hub_challenge) if str(hub_challenge).isdigit() else str(hub_challenge)
+
+
+@app.post("/api/brain/communication/whatsapp/webhook")
+async def whatsapp_webhook(request: Request):
+    """
+    Receive real inbound WhatsApp Cloud API events.
+
+    Security:
+    - requires configured WHATSAPP_APP_SECRET
+    - verifies X-Hub-Signature-256
+    - resolves the owning AURA user from phone_number_id
+    - claims provider message ID before processing
+    - stores inbound text in AURA persistent conversation memory
+    - routes it through AURA local brain
+    - sends the brain response only through the existing permission-checked
+      WhatsApp integration manager
+    """
+    raw_body = await request.body()
+
+    signature = request.headers.get("X-Hub-Signature-256", "")
+
+    if not _verify_whatsapp_signature(raw_body, signature):
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid WhatsApp webhook signature.",
+        )
+
+    try:
+        payload = json.loads(raw_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid JSON webhook payload.",
+        )
+
+    if str(payload.get("object", "")).strip().lower() != "whatsapp_business_account":
+        return {
+            "success": True,
+            "processed": 0,
+            "ignored": True,
+            "reason": "unsupported_webhook_object",
+        }
+
+    messages = _extract_whatsapp_messages(payload)
+
+    processed = 0
+    duplicates = 0
+    ignored = 0
+    replies_sent = 0
+    reply_failures = 0
+    results: List[Dict[str, Any]] = []
+
+    from .integrations.communication import (
+        CommunicationChannel,
+        Contact,
+    )
+    from .integrations.core import IntegrationContext
+
+    for inbound in messages:
+        message_id = inbound["message_id"]
+        sender = inbound["sender"]
+        content = inbound["content"]
+        phone_number_id = inbound["phone_number_id"]
+
+        user_id = communication_credential_store.find_user_by_phone_number_id(
+            channel=CommunicationChannel.WHATSAPP.value,
+            provider=whatsapp_adapter.provider,
+            phone_number_id=phone_number_id,
+        )
+
+        if not user_id:
+            ignored += 1
+            results.append(
+                {
+                    "message_id": message_id,
+                    "status": "IGNORED",
+                    "reason": "PHONE_NUMBER_NOT_CONFIGURED",
+                }
+            )
+            continue
+
+        # Provider retries must never create duplicate AURA turns.
+        if not brain.memory.claim_webhook_event(
+            event_id=message_id,
+            source="whatsapp",
+        ):
+            duplicates += 1
+            results.append(
+                {
+                    "message_id": message_id,
+                    "status": "DUPLICATE",
+                }
+            )
+            continue
+
+        session_id = f"whatsapp:{sender}"
+
+        brain.memory.add_conversation_turn(
+            user_id=user_id,
+            session_id=session_id,
+            role="user",
+            content=content,
+            metadata={
+                "channel": "whatsapp",
+                "direction": "inbound",
+                "provider": "whatsapp_business",
+                "provider_message_id": message_id,
+                "phone_number_id": phone_number_id,
+                "sender": sender,
+            },
+        )
+
+        try:
+            brain_result = brain.process_turn(
+                prompt=content,
+                user_id=user_id,
+                session_id=session_id,
+                interactive_confirm=False,
+                idempotency_key=f"whatsapp:{message_id}",
+                scope_id=f"whatsapp:{user_id}:{sender}",
+            )
+
+            response_text = str(
+                brain_result.get("response")
+                or brain_result.get("clarification")
+                or ""
+            ).strip()
+
+            if not response_text:
+                processed += 1
+                results.append(
+                    {
+                        "message_id": message_id,
+                        "status": "PROCESSED_NO_REPLY",
+                    }
+                )
+                continue
+
+            send_result = communication_integration_manager.execute(
+                integration_id="whatsapp",
+                action="send_message",
+                arguments={
+                    "address": sender,
+                    "content": response_text,
+                },
+                context=IntegrationContext(
+                    user_id=user_id,
+                    scope_id=f"whatsapp:{user_id}:{sender}:reply",
+                    confirmed=False,
+                ),
+            )
+
+            if send_result.success:
+                replies_sent += 1
+                brain.memory.add_conversation_turn(
+                    user_id=user_id,
+                    session_id=session_id,
+                    role="aura",
+                    content=response_text,
+                    metadata={
+                        "channel": "whatsapp",
+                        "direction": "outbound",
+                        "provider": "whatsapp_business",
+                        "trigger_message_id": message_id,
+                        "transport_status": (
+                            send_result.data or {}
+                        ).get("status"),
+                    },
+                )
+
+                results.append(
+                    {
+                        "message_id": message_id,
+                        "status": "REPLIED",
+                        "reply_status": (
+                            send_result.data or {}
+                        ).get("status"),
+                    }
+                )
+            else:
+                reply_failures += 1
+                results.append(
+                    {
+                        "message_id": message_id,
+                        "status": "PROCESSED_REPLY_FAILED",
+                        "error": send_result.error,
+                    }
+                )
+
+            processed += 1
+
+        except IntegrationPermissionError as exc:
+            reply_failures += 1
+            processed += 1
+            results.append(
+                {
+                    "message_id": message_id,
+                    "status": "PROCESSED_REPLY_BLOCKED",
+                    "error": str(exc),
+                }
+            )
+
+        except Exception as exc:
+            reply_failures += 1
+            processed += 1
+            results.append(
+                {
+                    "message_id": message_id,
+                    "status": "PROCESSING_FAILED",
+                    "error": str(exc),
+                }
+            )
+
+    return {
+        "success": True,
+        "processed": processed,
+        "duplicates": duplicates,
+        "ignored": ignored,
+        "replies_sent": replies_sent,
+        "reply_failures": reply_failures,
+        "results": results,
+    }
+
+
+@app.get("/api/brain/communication/whatsapp/status")
+def whatsapp_status(user_id: str = Query("default_user")):
+    return {
+        "success": True,
+        "channel": "whatsapp",
+        "provider": whatsapp_adapter.provider,
+        "status": whatsapp_adapter.status(user_id),
+    }
+
+
+@app.post("/api/brain/communication/whatsapp/send")
+def whatsapp_send(req: WhatsAppSendRequest):
+    from .integrations.core import IntegrationContext
+
+    try:
+        result = communication_integration_manager.execute(
+            integration_id="whatsapp",
+            action="send_message",
+            arguments={
+                "address": req.address,
+                "content": req.content,
+                "name": req.name,
+            },
+            context=IntegrationContext(
+                user_id=req.user_id,
+                scope_id=req.scope_id,
+                grant_id=req.grant_id,
+                confirmed=req.confirmed,
+            ),
+        )
+
+        return {
+            "success": result.success,
+            "integration": result.integration,
+            "action": result.action,
+            "data": result.data,
+            "error": result.error,
+            "metadata": result.metadata,
+        }
+
+    except IntegrationPermissionError as exc:
+        message = str(exc)
+
+        if "requires explicit confirmation" in message:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "CONFIRMATION_REQUIRED",
+                    "message": message,
+                },
+            )
+
+        if "DENIED" in message:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "PERMISSION_DENIED",
+                    "message": message,
+                },
+            )
+
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "PERMISSION_DENIED",
+                "message": message,
+            },
+        )
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=str(exc),
+        )
+
+
+@app.post("/api/brain/communication/whatsapp/disconnect")
+def whatsapp_disconnect(
+    user_id: str = Query("default_user"),
+    confirmed: bool = Query(False),
+):
+    if not confirmed:
+        raise HTTPException(
+            status_code=409,
+            detail="CONFIRMATION_REQUIRED",
+        )
+
+    try:
+        result = communication_integration_manager.execute(
+            integration_id="whatsapp",
+            action="disconnect",
+            arguments={},
+            context=IntegrationContext(
+                user_id=user_id,
+                confirmed=True,
+            ),
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=str(exc),
+        )
+
+    return {
+        "success": result.success,
+        "channel": "whatsapp",
+        "status": result.data.get("status") if result.data else None,
+        "error": result.error,
+        "metadata": result.metadata,
+    }
+
 
 @app.post("/api/brain/voice")
 def handle_voice(req: VoiceRequest):

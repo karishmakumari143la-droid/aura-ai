@@ -42,6 +42,8 @@ class PermissionKey(str, Enum):
     CLIPBOARD_READ = "CLIPBOARD_READ"
     CLIPBOARD_WRITE = "CLIPBOARD_WRITE"
     GIT_ACCESS = "GIT_ACCESS"
+    WHATSAPP_SEND = "WHATSAPP_SEND"
+    WHATSAPP_CONFIGURE = "WHATSAPP_CONFIGURE"
 
 
 DEFAULT_PERMISSIONS: Dict[str, PermissionState] = {
@@ -57,6 +59,8 @@ DEFAULT_PERMISSIONS: Dict[str, PermissionState] = {
     PermissionKey.CLIPBOARD_READ.value: PermissionState.ASK,
     PermissionKey.CLIPBOARD_WRITE.value: PermissionState.ASK,
     PermissionKey.GIT_ACCESS.value: PermissionState.ASK,
+    PermissionKey.WHATSAPP_SEND.value: PermissionState.ASK,
+    PermissionKey.WHATSAPP_CONFIGURE.value: PermissionState.ASK,
 }
 
 

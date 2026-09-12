@@ -42,6 +42,15 @@ class PersistentMemory:
                     timestamp REAL NOT NULL
                 )
             """)
+
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS webhook_events (
+                    event_id TEXT PRIMARY KEY,
+                    source TEXT NOT NULL,
+                    received_at REAL NOT NULL
+                )
+            """)
+
             conn.commit()
 
     def set_memory(self, user_id: str, category: str, key: str, value: Any, tags: Optional[List[str]] = None):
@@ -108,6 +117,33 @@ class PersistentMemory:
                 VALUES (?, ?, ?, ?, ?, ?)
             """, (user_id, session_id, role, content, meta_str, now))
             conn.commit()
+
+    def claim_webhook_event(self, event_id: str, source: str) -> bool:
+        """Atomically claim a webhook event so provider retries cannot duplicate work."""
+        event_id = str(event_id or "").strip()
+        source = str(source or "").strip()
+
+        if not event_id:
+            return False
+        if not source:
+            raise ValueError("source is required")
+
+        now = time.time()
+
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                """
+                INSERT OR IGNORE INTO webhook_events(
+                    event_id,
+                    source,
+                    received_at
+                )
+                VALUES (?, ?, ?)
+                """,
+                (event_id, source, now),
+            )
+            conn.commit()
+            return cursor.rowcount == 1
 
     def delete_memory(self, user_id: str, category: str, key: str) -> bool:
         with sqlite3.connect(self.db_path) as conn:

@@ -11,3 +11,12 @@ coverage/
 __pycache__/
 *.py[cod]
 *$py.class
+
+# AURA runtime databases / local secrets
+data/*.db
+data/*.db-*
+python_brain/**/*.db
+python_brain/**/*.db-*
+
+# Local backup snapshots
+python_brain/**/*.before-*
