@@ -536,8 +536,7 @@ def whatsapp_webhook_verify(
     return int(hub_challenge) if str(hub_challenge).isdigit() else str(hub_challenge)
 
 
-@app.post("/api/brain/communication/whatsapp/webhook")
-async def whatsapp_webhook(request: Request):
+async def process_whatsapp_webhook(raw_body: bytes, signature: str):
     """
     Receive real inbound WhatsApp Cloud API events.
 
@@ -551,10 +550,6 @@ async def whatsapp_webhook(request: Request):
     - sends the brain response only through the existing permission-checked
       WhatsApp integration manager
     """
-    raw_body = await request.body()
-
-    signature = request.headers.get("X-Hub-Signature-256", "")
-
     if not _verify_whatsapp_signature(raw_body, signature):
         raise HTTPException(
             status_code=403,
@@ -577,6 +572,11 @@ async def whatsapp_webhook(request: Request):
             "reason": "unsupported_webhook_object",
         }
 
+@app.post("/api/brain/communication/whatsapp/webhook")
+async def whatsapp_webhook(request: Request):
+    raw_body = await request.body()
+    signature = request.headers.get("X-Hub-Signature-256", "")
+    return await process_whatsapp_webhook(raw_body, signature)
     messages = _extract_whatsapp_messages(payload)
 
     processed = 0

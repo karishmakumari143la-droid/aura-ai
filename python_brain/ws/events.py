@@ -1,6 +1,6 @@
 """
 AURA AI — Real-time WebSocket Event Dispatcher
-Streams live orchestration events, DAG execution milestones, and agent logs.
+Streams live AURA execution events, progress milestones, and runtime logs.
 """
 
 from typing import List, Dict, Any, Set

@@ -49,7 +49,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<AuraTab>('aura');
   const [auraMode, setAuraMode] = useState<'COMMAND' | 'WORLD'>('COMMAND');
   const [orbState, setOrbState] = useState<AuraState>('IDLE');
-  const [showLanding, setShowLanding] = useState<boolean>(false);
+  const [showLanding, setShowLanding] = useState<boolean>(true);
+  const [pendingLandingPrompt, setPendingLandingPrompt] = useState<string | null>(null);
   const [isAuthOpen, setIsAuthOpen] = useState<boolean>(false);
   const [isPricingOpen, setIsPricingOpen] = useState<boolean>(false);
   const [isAllowanceModalOpen, setIsAllowanceModalOpen] = useState<boolean>(false);
@@ -90,7 +91,6 @@ export default function App() {
 
   useEffect(() => {
     if (!currentUser) {
-      setIsAuthOpen(true);
       return;
     }
 
@@ -629,12 +629,12 @@ export default function App() {
       <LandingPage
         onStartUsingAI={() => {
           setShowLanding(false);
-          setActiveTab('aura');
+          setIsAuthOpen(true);
         }}
         onPromptSelect={(prompt) => {
+          setPendingLandingPrompt(prompt);
           setShowLanding(false);
-          setActiveTab('aura');
-          handleExecuteCommand(prompt);
+          setIsAuthOpen(true);
         }}
         onOpenPricing={() => { setShowLanding(false); setIsAllowanceModalOpen(true); }}
         onLogin={() => { setShowLanding(false); setIsAuthOpen(true); }}
@@ -920,7 +920,21 @@ export default function App() {
       <AuthModal
         isOpen={isAuthOpen}
         onClose={() => setIsAuthOpen(false)}
-        onLoginSuccess={(user) => setCurrentUser(user)}
+        onLoginSuccess={(user) => {
+          setCurrentUser(user);
+          setIsAuthOpen(false);
+          setShowLanding(false);
+          setActiveTab('aura');
+
+          const prompt = pendingLandingPrompt;
+          setPendingLandingPrompt(null);
+
+          if (prompt) {
+            setTimeout(() => {
+              void handleExecuteCommand(prompt);
+            }, 0);
+          }
+        }}
       />
 
       <PricingModal

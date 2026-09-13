@@ -83,6 +83,25 @@ export const IntegrationsView: React.FC = () => {
   };
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const whatsapp = params.get('whatsapp');
+
+    if (whatsapp === 'connected') {
+      setWhatsappStatus('CONNECTED');
+      setWhatsappMessage('WhatsApp connected successfully through Meta.');
+
+      params.delete('whatsapp');
+
+      const cleanQuery = params.toString();
+      const cleanUrl =
+        window.location.pathname + (cleanQuery ? `?${cleanQuery}` : '');
+
+      window.history.replaceState({}, '', cleanUrl);
+      void fetchWhatsAppStatus();
+    }
+  }, []);
+
+  useEffect(() => {
     fetchIntegrations();
     fetchWhatsAppStatus();
   }, []);
@@ -95,6 +114,15 @@ export const IntegrationsView: React.FC = () => {
     await fetchWhatsAppStatus();
 
     setWhatsappLoading(false);
+  };
+
+  const handleWhatsAppOAuth = () => {
+    setWhatsappError('');
+    setWhatsappMessage('');
+
+    window.location.assign(
+      '/api/communication/whatsapp/oauth/start?return_to=/'
+    );
   };
 
   const handleWhatsAppConfigure = async (confirmed = false) => {
@@ -241,7 +269,7 @@ export const IntegrationsView: React.FC = () => {
 
           <p className="text-xs text-slate-400 mt-0.5">
             Production connections to GitHub, Google Workspace, WhatsApp
-            Cloud API, n8n, Direct UPI Payments, and databases.
+            Cloud API, n8n, and databases.
           </p>
         </div>
       </div>
@@ -252,12 +280,12 @@ export const IntegrationsView: React.FC = () => {
             <div className="flex items-center justify-between border-b border-slate-800 px-5 py-4">
               <div>
                 <h3 className="text-sm font-bold text-white">
-                  Connect WhatsApp Cloud API
+                  Connect WhatsApp
                 </h3>
-
                 <p className="mt-1 text-[11px] text-slate-400">
-                  Credentials are sent to AURA's secure backend. The access
-                  token is never displayed after submission.
+                  Connect your WhatsApp Business account securely through Meta.
+                  AURA will discover the Business Account and phone number
+                  automatically.
                 </p>
               </div>
 
@@ -271,81 +299,15 @@ export const IntegrationsView: React.FC = () => {
             </div>
 
             <div className="space-y-4 p-5">
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold text-slate-300">
-                  WhatsApp Access Token
-                </label>
-
-                <input
-                  type="password"
-                  autoComplete="off"
-                  value={whatsappConfig.access_token}
-                  onChange={(e) =>
-                    setWhatsappConfig((current) => ({
-                      ...current,
-                      access_token: e.target.value,
-                    }))
-                  }
-                  placeholder="Paste Meta access token"
-                  className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-white outline-none focus:border-cyan-500"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold text-slate-300">
-                  Phone Number ID
-                </label>
-
-                <input
-                  type="text"
-                  autoComplete="off"
-                  value={whatsappConfig.phone_number_id}
-                  onChange={(e) =>
-                    setWhatsappConfig((current) => ({
-                      ...current,
-                      phone_number_id: e.target.value,
-                    }))
-                  }
-                  placeholder="Meta WhatsApp Phone Number ID"
-                  className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-white outline-none focus:border-cyan-500"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold text-slate-300">
-                  API Version
-                </label>
-
-                <input
-                  type="text"
-                  value={whatsappConfig.api_version}
-                  onChange={(e) =>
-                    setWhatsappConfig((current) => ({
-                      ...current,
-                      api_version: e.target.value,
-                    }))
-                  }
-                  placeholder="v23.0"
-                  className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-white outline-none focus:border-cyan-500"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold text-slate-300">
-                  Graph API Base URL
-                </label>
-
-                <input
-                  type="url"
-                  value={whatsappConfig.base_url}
-                  onChange={(e) =>
-                    setWhatsappConfig((current) => ({
-                      ...current,
-                      base_url: e.target.value,
-                    }))
-                  }
-                  className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-white outline-none focus:border-cyan-500"
-                />
+              <div className="rounded-xl border border-cyan-900/60 bg-cyan-950/20 p-4">
+                <div className="text-xs font-bold text-cyan-300">
+                  Secure Meta connection
+                </div>
+                <p className="mt-2 text-[11px] leading-5 text-slate-400">
+                  You will be redirected to Meta to authorize WhatsApp.
+                  AURA does not ask you to paste an access token or Phone
+                  Number ID into the dashboard.
+                </p>
               </div>
 
               {whatsappError && (
@@ -354,9 +316,16 @@ export const IntegrationsView: React.FC = () => {
                 </div>
               )}
 
-              <div className="rounded-lg border border-cyan-900/60 bg-cyan-950/20 px-3 py-2 text-[11px] text-slate-400">
-                AURA validates the credentials with WhatsApp before storing
-                them. Credentials are encrypted at rest.
+              {whatsappMessage && (
+                <div className="rounded-lg border border-emerald-800 bg-emerald-950/40 px-3 py-2 text-[11px] text-emerald-300">
+                  {whatsappMessage}
+                </div>
+              )}
+
+              <div className="rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-3 text-[11px] text-slate-400">
+                AURA will validate the authorized WhatsApp Business connection
+                before showing it as connected. Credentials are stored only
+                in the encrypted backend credential store.
               </div>
 
               <div className="flex gap-2 pt-1">
@@ -368,19 +337,11 @@ export const IntegrationsView: React.FC = () => {
                 </button>
 
                 <button
-                  onClick={() => handleWhatsAppConfigure(false)}
-                  disabled={
-                    whatsappConfigLoading ||
-                    !whatsappConfig.access_token.trim() ||
-                    !whatsappConfig.phone_number_id.trim() ||
-                    !whatsappConfig.api_version.trim() ||
-                    !whatsappConfig.base_url.trim()
-                  }
+                  onClick={handleWhatsAppOAuth}
+                  disabled={whatsappConfigLoading}
                   className="flex-1 rounded-lg bg-cyan-500 py-2 text-xs font-bold text-slate-950 hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {whatsappConfigLoading
-                    ? 'Validating...'
-                    : 'Validate & Connect'}
+                  Connect with Meta
                 </button>
               </div>
             </div>

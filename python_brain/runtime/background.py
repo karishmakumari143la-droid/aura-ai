@@ -14,6 +14,8 @@ import os
 import json
 import time
 import threading
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 import uuid
 from typing import Dict, Any, Optional, Callable
 
@@ -534,19 +536,35 @@ class RecurringWorkScheduler:
     def _next_timestamp(
         current_timestamp: float,
         frequency: str,
+        timezone: str = "UTC",
     ) -> float:
-        intervals = {
-            "hourly": 60 * 60,
-            "daily": 24 * 60 * 60,
-            "weekly": 7 * 24 * 60 * 60,
-        }
-
-        if frequency not in intervals:
+        if frequency not in RecurringWorkScheduler.ALLOWED_FREQUENCIES:
             raise ValueError(
                 f"Unsupported recurring frequency: {frequency}"
             )
 
-        return current_timestamp + intervals[frequency]
+        timezone_name = str(timezone or "UTC").strip() or "UTC"
+
+        try:
+            tz = ZoneInfo(timezone_name)
+        except Exception as exc:
+            raise ValueError(
+                f"Invalid recurring job timezone: {timezone_name}"
+            ) from exc
+
+        current_local = datetime.fromtimestamp(
+            current_timestamp,
+            tz=tz,
+        )
+
+        if frequency == "hourly":
+            next_local = current_local + timedelta(hours=1)
+        elif frequency == "daily":
+            next_local = current_local + timedelta(days=1)
+        else:
+            next_local = current_local + timedelta(weeks=1)
+
+        return next_local.timestamp()
 
     def create_job(
         self,
@@ -701,6 +719,7 @@ class RecurringWorkScheduler:
             next_run = self._next_timestamp(
                 float(job["next_run_at"]),
                 job["frequency"],
+                job["timezone"],
             )
 
             cursor = conn.execute("""

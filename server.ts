@@ -69,6 +69,91 @@ const credentials = new Map<string, string>();
 const sessions = new Map<string, string>();
 const requestUser = new AsyncLocalStorage<User>();
 
+const whatsappOAuthStates = new Map<string, {
+  userId: string;
+  returnTo: string;
+  expiresAt: number;
+}>();
+
+const WHATSAPP_OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
+
+function getWhatsAppOAuthConfig() {
+  const appId = (process.env.WHATSAPP_APP_ID || '').trim();
+  const appSecret = (process.env.WHATSAPP_APP_SECRET_OAUTH || '').trim();
+  const redirectUri = (process.env.WHATSAPP_OAUTH_REDIRECT_URI || '').trim();
+  const configId = (process.env.WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID || '').trim();
+
+  return {
+    appId,
+    appSecret,
+    redirectUri,
+    configId,
+    isConfigured: Boolean(appId && appSecret && redirectUri)
+  };
+}
+
+function createWhatsAppOAuthState(userId: string, returnTo: string): string {
+  const state = randomBytes(32).toString('hex');
+
+  whatsappOAuthStates.set(state, {
+    userId,
+    returnTo: returnTo.startsWith('/') ? returnTo : '/',
+    expiresAt: Date.now() + WHATSAPP_OAUTH_STATE_TTL_MS
+  });
+
+  return state;
+}
+
+function consumeWhatsAppOAuthState(state: string): {
+  valid: boolean;
+  userId?: string;
+  returnTo?: string;
+} {
+  const entry = whatsappOAuthStates.get(state);
+  whatsappOAuthStates.delete(state);
+
+  if (!entry || entry.expiresAt < Date.now()) {
+    return { valid: false };
+  }
+
+  return {
+    valid: true,
+    userId: entry.userId,
+    returnTo: entry.returnTo
+  };
+}
+
+function cleanupExpiredWhatsAppOAuthStates(): void {
+  const now = Date.now();
+
+  for (const [state, entry] of whatsappOAuthStates.entries()) {
+    if (entry.expiresAt < now) {
+      whatsappOAuthStates.delete(state);
+    }
+  }
+}
+
+setInterval(cleanupExpiredWhatsAppOAuthStates, 60_000).unref();
+
+function getWhatsAppOAuthAuthorizationUrl(
+  config: ReturnType<typeof getWhatsAppOAuthConfig>,
+  state: string
+): string {
+  const params = new URLSearchParams({
+    client_id: config.appId,
+    redirect_uri: config.redirectUri,
+    state,
+    response_type: 'code',
+  });
+
+  if (config.configId) {
+    params.set('config_id', config.configId);
+  }
+
+  return `https://www.facebook.com/v23.0/dialog/oauth?${params.toString()}`;
+}
+
+
 
 // Seed persistent owner in AuraDB
 try {
@@ -772,7 +857,152 @@ async function startServer() {
   });
 
   // ===========================================================
-  // 2. AURA BRAIN: CENTRAL ORCHESTRATOR & PARALLEL DAG ENGINE
+  // WHATSAPP META OAUTH
+  // ===========================================================
+  app.get('/api/communication/whatsapp/oauth/start', (req: Request, res: Response) => {
+    const user = getSessionUser(req);
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        status: 'AUTHENTICATION_REQUIRED',
+        error: 'AURA AI session is required.'
+      });
+    }
+
+    const config = getWhatsAppOAuthConfig();
+
+    if (!config.isConfigured) {
+      return res.status(503).json({
+        success: false,
+        status: 'NOT_CONFIGURED',
+        error: 'WHATSAPP_OAUTH_SETUP_REQUIRED',
+        message: 'WhatsApp Meta OAuth credentials are not configured on this server.'
+      });
+    }
+
+    const requestedReturnTo =
+      typeof req.query.return_to === 'string' ? req.query.return_to : '/';
+
+    const state = createWhatsAppOAuthState(user.id, requestedReturnTo);
+    const authorizationUrl = getWhatsAppOAuthAuthorizationUrl(config, state);
+
+    return res.redirect(302, authorizationUrl);
+  });
+
+  app.get('/api/communication/whatsapp/oauth/callback', async (req: Request, res: Response) => {
+    const { code, state, error, error_description } = req.query;
+
+    if (error) {
+      return res.status(400).send(
+        `WhatsApp authorization was cancelled or denied.${error_description ? ` ${String(error_description)}` : ''}`
+      );
+    }
+
+    if (typeof code !== 'string' || typeof state !== 'string') {
+      return res.status(400).send('Invalid WhatsApp OAuth callback.');
+    }
+
+    const stateResult = consumeWhatsAppOAuthState(state);
+
+    if (!stateResult.valid || !stateResult.userId) {
+      return res.status(400).send('Invalid or expired WhatsApp authorization request.');
+    }
+
+    const config = getWhatsAppOAuthConfig();
+
+    if (!config.isConfigured) {
+      return res.status(503).send('WhatsApp Meta OAuth is not configured on this server.');
+    }
+
+    try {
+      const tokenResponse = await fetch('https://graph.facebook.com/v23.0/oauth/access_token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: new URLSearchParams({
+          client_id: config.appId,
+          client_secret: config.appSecret,
+          redirect_uri: config.redirectUri,
+          code
+        }).toString()
+      });
+
+      const tokenBody = await tokenResponse.text();
+
+      if (!tokenResponse.ok) {
+        console.error('[WhatsApp OAuth] Token exchange failed:', {
+          status: tokenResponse.status
+        });
+
+        return res.status(502).send('WhatsApp authorization could not be completed.');
+      }
+
+      let tokenData: any;
+
+      try {
+        tokenData = JSON.parse(tokenBody);
+      } catch {
+        return res.status(502).send('WhatsApp authorization returned an invalid response.');
+      }
+
+      const accessToken =
+        typeof tokenData?.access_token === 'string'
+          ? tokenData.access_token.trim()
+          : '';
+
+      if (!accessToken) {
+        return res.status(502).send('WhatsApp authorization did not return an access token.');
+      }
+
+      // The access token is passed only through the secure stdin bridge.
+      // It is never placed in process.argv, frontend state, or logs.
+      const provisioningResult = await runPythonBrainSecure({
+        action: 'whatsapp_oauth_provision',
+        user_id: stateResult.userId,
+        access_token: accessToken,
+        api_version: 'v23.0',
+        base_url: 'https://graph.facebook.com'
+      });
+
+      if (!provisioningResult?.success) {
+        console.error('[WhatsApp OAuth] Asset provisioning failed:', {
+          userId: stateResult.userId,
+          error: provisioningResult?.error || 'Unknown provisioning error',
+          provider_status: provisioningResult?.provider_status
+        });
+
+        return res.status(502).send(
+          'WhatsApp authorization succeeded, but WhatsApp Business setup could not be completed.'
+        );
+      }
+
+      console.log('[WhatsApp OAuth] WhatsApp connection provisioned.', {
+        userId: stateResult.userId,
+        wabaId: provisioningResult.waba_id,
+        phoneNumberId: provisioningResult.phone_number_id,
+        webhookSubscribed: provisioningResult.webhook_subscribed === true
+      });
+
+      const returnTo = stateResult.returnTo || '/';
+
+      const successUrl = new URL(
+        returnTo,
+        `${req.protocol}://${req.get('host')}`
+      );
+
+      successUrl.searchParams.set('whatsapp', 'connected');
+
+      return res.redirect(302, successUrl.pathname + successUrl.search);
+    } catch (error) {
+      console.error('[WhatsApp OAuth] Callback failed:', error instanceof Error ? error.message : error);
+      return res.status(502).send('WhatsApp authorization could not be completed.');
+    }
+  });
+
+  // ===========================================================
+  // 2. AURA BRAIN: CENTRAL ORCHESTRATOR
   // ===========================================================
   app.post('/api/ai/orchestrate', async (_req: Request, res: Response) => {
     return res.status(410).json({
@@ -784,7 +1014,7 @@ async function startServer() {
 
 
   // ===========================================================
-  // LEGACY DAG PROGRESSION ENGINE — DISABLED
+  // LEGACY ORCHESTRATION COMPATIBILITY — DISABLED
   // ===========================================================
 
         // ===========================================================
@@ -961,10 +1191,10 @@ async function startServer() {
       category: cat,
       slug: `${cat}-${Date.now().toString(36)}`,
       headline: headline || `${siteName} — Built with AURA AI`,
-      description: description || 'Engineered with autonomous specialist agents and verified accessibility.',
+      description: description || 'Engineered with AURA AI and verified accessibility.',
       pricing: pricing || [
         { name: 'Starter', price: '$49', period: '/mo', features: ['Core Services', 'Email & Chat Support', 'Fast Turnaround'] },
-        { name: 'Signature', price: '$99', period: '/mo', features: ['All Starter Features', 'Dedicated Specialist Attention', 'Priority Queue'] }
+        { name: 'Signature', price: '$99', period: '/mo', features: ['All Starter Features', 'Dedicated AURA Support', 'Priority Queue'] }
       ],
       whatsappNumber: whatsappNumber || '+1 (555) 000-0000',
       whatsappCtaText: 'Contact Concierge on WhatsApp',
@@ -2013,6 +2243,110 @@ async function startServer() {
       });
     });
   };
+
+  const runPythonBrainSecure = async (payload: any): Promise<any> => {
+    return new Promise((resolve) => {
+      const safePayload = {
+        ...payload,
+        data_dir: payload.data_dir || `${process.cwd()}/data`
+      };
+
+      // Secret-bearing payload is sent only through stdin.
+      // It is never included in process.argv.
+      const pythonProcess = spawn(
+        'python3',
+        ['-m', 'python_brain.cli'],
+        {
+          cwd: process.cwd(),
+          env: { ...process.env },
+          stdio: ['pipe', 'pipe', 'pipe']
+        }
+      );
+
+      let stdout = '';
+      let stderr = '';
+
+      pythonProcess.stdout.on('data', (data) => {
+        stdout += data.toString();
+      });
+
+      pythonProcess.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      pythonProcess.on('close', (code) => {
+        try {
+          const firstBrace = stdout.indexOf('{');
+          const lastBrace = stdout.lastIndexOf('}');
+
+          if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+            return resolve(JSON.parse(stdout.slice(firstBrace, lastBrace + 1)));
+          }
+
+          return resolve(JSON.parse(stdout.trim()));
+        } catch (err: any) {
+          return resolve({
+            success: false,
+            error: stderr || `Failed to parse secure Python response: ${err.message}`,
+            code
+          });
+        }
+      });
+
+      pythonProcess.stdin.write(JSON.stringify(safePayload));
+      pythonProcess.stdin.end();
+    });
+  };
+
+
+  // ===========================================================
+  // WHATSAPP WEBHOOK PUBLIC RELAY
+  // Meta reaches the public Express server; Python Brain owns
+  // verification, signature validation, idempotency, memory and replies.
+  // ===========================================================
+  app.get('/api/brain/communication/whatsapp/webhook', async (req: Request, res: Response) => {
+    try {
+      const result = await runPythonBrainSecure({
+        action: 'whatsapp_webhook_verify',
+        query: req.query
+      });
+
+      const statusCode = result?.success === false
+        ? (result?.error_code === 'INVALID_VERIFY_TOKEN' ? 403 : 400)
+        : 200;
+
+      if (typeof result?.challenge === 'number' || typeof result?.challenge === 'string') {
+        return res.status(statusCode).send(String(result.challenge));
+      }
+
+      return res.status(statusCode).json(result);
+    } catch (err: any) {
+      return res.status(500).json({
+        success: false,
+        error: err.message || 'WhatsApp webhook verification failed'
+      });
+    }
+  });
+
+  app.post('/api/brain/communication/whatsapp/webhook', async (req: Request, res: Response) => {
+    try {
+      const rawBody = JSON.stringify(req.body ?? {});
+
+      const result = await runPythonBrainSecure({
+        action: 'whatsapp_webhook',
+        raw_body: rawBody,
+        signature: req.get('X-Hub-Signature-256') || '',
+        payload: req.body
+      });
+
+      return res.status(result?.success === false ? 400 : 200).json(result);
+    } catch (err: any) {
+      return res.status(500).json({
+        success: false,
+        error: err.message || 'WhatsApp webhook processing failed'
+      });
+    }
+  });
 
   app.get('/api/brain/status', async (req: Request, res: Response) => {
     try {

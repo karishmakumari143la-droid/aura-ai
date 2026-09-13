@@ -13,13 +13,49 @@ logging.basicConfig(stream=sys.stderr, level=logging.INFO)
 
 from python_brain.brain import AuraBrain
 
-def main():
-    if len(sys.argv) < 2:
-        print(json.dumps({"success": False, "error": "No input payload provided"}))
-        sys.exit(1)
+def _load_local_env():
+    """Load simple KEY=VALUE entries from the project .env without logging secrets."""
+    env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+    if not os.path.isfile(env_path):
+        return
 
     try:
-        raw_input = sys.argv[1]
+        with open(env_path, "r", encoding="utf-8") as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip()
+
+                if not key:
+                    continue
+
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+                    value = value[1:-1]
+
+                os.environ.setdefault(key, value)
+    except OSError:
+        return
+
+
+def main():
+    _load_local_env()
+    try:
+        if len(sys.argv) >= 2:
+            raw_input = sys.argv[1]
+        else:
+            raw_input = sys.stdin.read()
+
+        if not raw_input.strip():
+            print(json.dumps({
+                "success": False,
+                "error": "No input payload provided"
+            }))
+            sys.exit(1)
+
         payload = json.loads(raw_input)
     except Exception as e:
         print(json.dumps({"success": False, "error": f"Invalid JSON payload: {str(e)}"}))
@@ -204,6 +240,381 @@ def main():
         print(json.dumps({
             "success": True,
             "task": task
+        }))
+        return
+
+    if action == "whatsapp_webhook_verify":
+        from urllib.parse import parse_qs
+
+        query = payload.get("query") or {}
+
+        def query_value(name):
+            value = query.get(name)
+            if isinstance(value, list):
+                return str(value[0]) if value else ""
+            return str(value or "")
+
+        hub_mode = query_value("hub.mode")
+        hub_verify_token = query_value("hub.verify_token")
+        hub_challenge = query_value("hub.challenge")
+
+        expected_token = os.environ.get(
+            "WHATSAPP_WEBHOOK_VERIFY_TOKEN",
+            ""
+        ).strip()
+
+        import hmac
+
+        if (
+            hub_mode != "subscribe"
+            or not expected_token
+            or not hub_verify_token
+            or not hmac.compare_digest(
+                hub_verify_token,
+                expected_token,
+            )
+        ):
+            print(json.dumps({
+                "success": False,
+                "error_code": "INVALID_VERIFY_TOKEN",
+                "error": "WhatsApp webhook verification failed."
+            }))
+            return
+
+        if not hub_challenge:
+            print(json.dumps({
+                "success": False,
+                "error": "hub.challenge is required."
+            }))
+            return
+
+        challenge = (
+            int(hub_challenge)
+            if hub_challenge.isdigit()
+            else hub_challenge
+        )
+
+        print(json.dumps({
+            "success": True,
+            "challenge": challenge
+        }))
+        return
+
+    if action == "whatsapp_webhook":
+        import asyncio
+        from .main import process_whatsapp_webhook
+
+        raw_body_value = payload.get("raw_body", "")
+        if not isinstance(raw_body_value, str):
+            print(json.dumps({
+                "success": False,
+                "error": "raw_body must be a string"
+            }))
+            return
+
+        signature = str(
+            payload.get("signature", "")
+        ).strip()
+
+        result = asyncio.run(
+            process_whatsapp_webhook(
+                raw_body=raw_body_value.encode("utf-8"),
+                signature=signature,
+            )
+        )
+
+        print(json.dumps(result))
+        return
+
+    if action == "whatsapp_oauth_store":
+        from .integrations.communication_token_store import CommunicationCredentialStore
+
+        user_id = str(payload.get("user_id", "")).strip()
+        phone_number_id = str(payload.get("phone_number_id", "")).strip()
+        access_token = str(payload.get("access_token", "")).strip()
+        api_version = str(payload.get("api_version", "v23.0")).strip()
+        base_url = str(
+            payload.get("base_url", "https://graph.facebook.com")
+        ).strip()
+        waba_id = str(payload.get("waba_id", "")).strip()
+
+        if not user_id:
+            print(json.dumps({
+                "success": False,
+                "error": "user_id is required"
+            }))
+            return
+
+        if not phone_number_id:
+            print(json.dumps({
+                "success": False,
+                "error": "phone_number_id is required"
+            }))
+            return
+
+        if not access_token:
+            print(json.dumps({
+                "success": False,
+                "error": "access_token is required"
+            }))
+            return
+
+        if not waba_id:
+            print(json.dumps({
+                "success": False,
+                "error": "waba_id is required"
+            }))
+            return
+
+        if not base_url.startswith("https://"):
+            print(json.dumps({
+                "success": False,
+                "error": "base_url must use HTTPS"
+            }))
+            return
+
+        credential_store = CommunicationCredentialStore(
+            db_path=os.path.join(
+                brain.data_dir,
+                "aura_communication_credentials.db",
+            )
+        )
+
+        credentials = {
+            "access_token": access_token,
+            "phone_number_id": phone_number_id,
+            "waba_id": waba_id,
+            "api_version": api_version,
+            "base_url": base_url,
+        }
+
+        credential_store.save(
+            user_id=user_id,
+            channel="whatsapp",
+            provider="whatsapp_business",
+            credentials=credentials,
+        )
+
+        print(json.dumps({
+            "success": True,
+            "status": "STORED",
+            "channel": "whatsapp",
+            "provider": "whatsapp_business",
+            "phone_number_id": phone_number_id,
+            "waba_id": waba_id,
+        }))
+        return
+
+    if action == "whatsapp_oauth_provision":
+        from .integrations.communication_token_store import CommunicationCredentialStore
+        import requests
+
+        user_id = str(payload.get("user_id", "")).strip()
+        access_token = str(payload.get("access_token", "")).strip()
+        api_version = str(payload.get("api_version", "v23.0")).strip()
+        base_url = str(
+            payload.get("base_url", "https://graph.facebook.com")
+        ).strip().rstrip("/")
+
+        if not user_id or not access_token:
+            print(json.dumps({
+                "success": False,
+                "error": "user_id and access_token are required"
+            }))
+            return
+
+        if not base_url.startswith("https://"):
+            print(json.dumps({
+                "success": False,
+                "error": "base_url must use HTTPS"
+            }))
+            return
+
+        headers = {
+            "Authorization": f"Bearer {access_token}"
+        }
+
+        session = requests.Session()
+
+        try:
+            businesses_response = session.get(
+                f"{base_url}/{api_version}/me/businesses",
+                headers=headers,
+                params={
+                    "fields": "id,name",
+                    "limit": "100"
+                },
+                timeout=20,
+            )
+        except requests.RequestException as exc:
+            print(json.dumps({
+                "success": False,
+                "error": f"Meta business discovery failed: {exc}"
+            }))
+            return
+
+        if not 200 <= businesses_response.status_code < 300:
+            print(json.dumps({
+                "success": False,
+                "error": "Meta business discovery was rejected.",
+                "provider_status": businesses_response.status_code
+            }))
+            return
+
+        businesses = businesses_response.json().get("data") or []
+
+        if not businesses:
+            print(json.dumps({
+                "success": False,
+                "error": "No Meta Business portfolio is available to this authorized connection."
+            }))
+            return
+
+        selected_waba = None
+
+        for business in businesses:
+            business_id = str(business.get("id", "")).strip()
+
+            if not business_id:
+                continue
+
+            try:
+                waba_response = session.get(
+                    f"{base_url}/{api_version}/{business_id}/client_whatsapp_business_accounts",
+                    headers=headers,
+                    params={
+                        "fields": "id,name",
+                        "limit": "100"
+                    },
+                    timeout=20,
+                )
+            except requests.RequestException:
+                continue
+
+            if not 200 <= waba_response.status_code < 300:
+                continue
+
+            wabas = waba_response.json().get("data") or []
+
+            if wabas:
+                selected_waba = {
+                    "business_id": business_id,
+                    "waba": wabas[0]
+                }
+                break
+
+        if not selected_waba:
+            print(json.dumps({
+                "success": False,
+                "error": "No WhatsApp Business Account is available to this authorized connection."
+            }))
+            return
+
+        waba_id = str(selected_waba["waba"].get("id", "")).strip()
+
+        if not waba_id:
+            print(json.dumps({
+                "success": False,
+                "error": "Meta returned an invalid WhatsApp Business Account."
+            }))
+            return
+
+        try:
+            phone_response = session.get(
+                f"{base_url}/{api_version}/{waba_id}/phone_numbers",
+                headers=headers,
+                params={
+                    "fields": "id,display_phone_number,verified_name",
+                    "limit": "100"
+                },
+                timeout=20,
+            )
+        except requests.RequestException as exc:
+            print(json.dumps({
+                "success": False,
+                "error": f"Meta phone-number discovery failed: {exc}"
+            }))
+            return
+
+        if not 200 <= phone_response.status_code < 300:
+            print(json.dumps({
+                "success": False,
+                "error": "Meta phone-number discovery was rejected.",
+                "provider_status": phone_response.status_code
+            }))
+            return
+
+        phone_numbers = phone_response.json().get("data") or []
+
+        if not phone_numbers:
+            print(json.dumps({
+                "success": False,
+                "error": "No WhatsApp Business phone number is available for the authorized WABA."
+            }))
+            return
+
+        phone = phone_numbers[0]
+        phone_number_id = str(phone.get("id", "")).strip()
+
+        if not phone_number_id:
+            print(json.dumps({
+                "success": False,
+                "error": "Meta returned an invalid phone number ID."
+            }))
+            return
+
+        # Subscribe this WABA to the current Meta app so webhook events can arrive.
+        try:
+            subscribe_response = session.post(
+                f"{base_url}/{api_version}/{waba_id}/subscribed_apps",
+                headers=headers,
+                timeout=20,
+            )
+        except requests.RequestException as exc:
+            print(json.dumps({
+                "success": False,
+                "error": f"Meta webhook subscription failed: {exc}"
+            }))
+            return
+
+        if not 200 <= subscribe_response.status_code < 300:
+            print(json.dumps({
+                "success": False,
+                "error": "Meta webhook subscription was rejected.",
+                "provider_status": subscribe_response.status_code
+            }))
+            return
+
+        credential_store = CommunicationCredentialStore(
+            db_path=os.path.join(
+                brain.data_dir,
+                "aura_communication_credentials.db",
+            )
+        )
+
+        credential_store.save(
+            user_id=user_id,
+            channel="whatsapp",
+            provider="whatsapp_business",
+            credentials={
+                "access_token": access_token,
+                "phone_number_id": phone_number_id,
+                "waba_id": waba_id,
+                "api_version": api_version,
+                "base_url": base_url,
+            },
+        )
+
+        print(json.dumps({
+            "success": True,
+            "status": "STORED",
+            "channel": "whatsapp",
+            "provider": "whatsapp_business",
+            "waba_id": waba_id,
+            "phone_number_id": phone_number_id,
+            "display_phone_number": phone.get("display_phone_number"),
+            "verified_name": phone.get("verified_name"),
+            "webhook_subscribed": True,
         }))
         return
 

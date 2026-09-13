@@ -115,6 +115,96 @@ def test_recurring_scheduler_does_not_dispatch_paused_job():
         assert dispatcher.dispatched == []
 
 
+def test_recurring_scheduler_timezone_aware_daily_advance():
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "recurring.db"
+        manager = BackgroundTaskManager(db_path=str(db_path))
+        scheduler = RecurringWorkScheduler(
+            task_manager=manager,
+            dispatcher=FakeDispatcher(),
+        )
+
+        # 2026-01-15 12:00 UTC = 17:30 Asia/Kolkata.
+        current = 1768478400.0
+
+        next_run = scheduler._next_timestamp(
+            current,
+            "daily",
+            "Asia/Kolkata",
+        )
+
+        expected = current + 24 * 60 * 60
+        assert next_run == expected
+
+
+def test_recurring_scheduler_timezone_aware_weekly_advance():
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "recurring.db"
+        manager = BackgroundTaskManager(db_path=str(db_path))
+        scheduler = RecurringWorkScheduler(
+            task_manager=manager,
+            dispatcher=FakeDispatcher(),
+        )
+
+        current = 1768478400.0
+
+        next_run = scheduler._next_timestamp(
+            current,
+            "weekly",
+            "Asia/Kolkata",
+        )
+
+        expected = current + 7 * 24 * 60 * 60
+        assert next_run == expected
+
+
+def test_recurring_scheduler_dst_transition_preserves_local_hour():
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "recurring.db"
+        manager = BackgroundTaskManager(db_path=str(db_path))
+        scheduler = RecurringWorkScheduler(
+            task_manager=manager,
+            dispatcher=FakeDispatcher(),
+        )
+
+        # 2026-03-08 06:30 UTC = 01:30 EST, immediately before
+        # the America/New_York DST transition.
+        current = 1772951400.0
+
+        next_run = scheduler._next_timestamp(
+            current,
+            "daily",
+            "America/New_York",
+        )
+
+        # Calendar-day addition should produce 2026-03-09 01:30 EDT.
+        # The UTC timestamp therefore changes according to the DST offset.
+        expected = 1773034200.0
+
+        assert next_run == expected
+
+
+def test_recurring_scheduler_rejects_invalid_timezone():
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "recurring.db"
+        manager = BackgroundTaskManager(db_path=str(db_path))
+        scheduler = RecurringWorkScheduler(
+            task_manager=manager,
+            dispatcher=FakeDispatcher(),
+        )
+
+        try:
+            scheduler._next_timestamp(
+                time.time(),
+                "daily",
+                "Not/A/Real_Timezone",
+            )
+        except ValueError as exc:
+            assert "Invalid recurring job timezone" in str(exc)
+        else:
+            raise AssertionError("Invalid timezone was not rejected")
+
+
 if __name__ == "__main__":
     test_recurring_scheduler_create_list_toggle_delete()
     test_recurring_scheduler_dispatches_due_aura_turn()
