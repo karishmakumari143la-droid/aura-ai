@@ -89,7 +89,7 @@ export default function App() {
     const authSuccess = new URLSearchParams(window.location.search).get('auth') === 'success';
 
     fetchSession().then((sessionUser) => {
-      if (authSuccess && sessionUser) {
+      if (sessionUser) {
         setShowLanding(false);
         setActiveTab('aura');
         window.history.replaceState({}, document.title, window.location.pathname);
