@@ -86,7 +86,15 @@ export default function App() {
 
   // Initialize and fetch user session & state
   useEffect(() => {
-    fetchSession();
+    const authSuccess = new URLSearchParams(window.location.search).get('auth') === 'success';
+
+    fetchSession().then((sessionUser) => {
+      if (authSuccess && sessionUser) {
+        setShowLanding(false);
+        setActiveTab('aura');
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+    });
   }, []);
 
   useEffect(() => {
@@ -110,7 +118,7 @@ export default function App() {
     fetchProjectQuota();
   }, [currentUser]);
 
-  const fetchSession = async () => {
+  const fetchSession = async (): Promise<User | null> => {
     try {
       const res = await fetch('/api/auth/me');
       const contentType = res.headers.get('content-type') || '';
@@ -118,6 +126,10 @@ export default function App() {
         const data = await res.json();
         if (data.user) {
           setCurrentUser(data.user);
+          if (data.ownerEmail) {
+            setOwnerEmail(data.ownerEmail);
+          }
+          return data.user;
         }
         if (data.ownerEmail) {
           setOwnerEmail(data.ownerEmail);
@@ -126,6 +138,7 @@ export default function App() {
     } catch (err) {
       console.error('Failed to fetch auth session:', err);
     }
+    return null;
   };
 
   const fetchWebsites = async () => {

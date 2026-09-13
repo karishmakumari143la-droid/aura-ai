@@ -76,7 +76,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const handleProviderAction = (endpoint: string) => {
     setIsLoading(true);
     setMessage(null);
-    window.location.assign(endpoint);
+    window.location.assign(`${endpoint}?returnTo=/?auth=success`);
   };
 
   return (
