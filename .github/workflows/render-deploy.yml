@@ -36,6 +36,9 @@ jobs:
       - name: Install pytest
         run: pip install pytest
 
+      - name: Install Playwright Chromium
+        run: python -m playwright install --with-deps chromium
+
       - name: Run Python tests
         run: pytest -q tests_python
 
