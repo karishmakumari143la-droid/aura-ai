@@ -8,6 +8,10 @@ import sys
 import hashlib
 import hmac
 import json
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from typing import Dict, Any, List, Optional
 from fastapi import (
     FastAPI,

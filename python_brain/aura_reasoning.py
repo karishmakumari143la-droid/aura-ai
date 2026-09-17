@@ -14,6 +14,8 @@ Handles:
 import re
 from typing import Any, Dict, List
 
+from .local_llm import LocalLLM
+
 
 class AuraReasoning:
 
@@ -34,6 +36,7 @@ class AuraReasoning:
     def __init__(self):
         self.engine = "AURA_LOCAL_REASONING"
         self.version = "1.0.0"
+        self.local_llm = LocalLLM()
 
     @staticmethod
     def detect_language(text: str) -> str:
@@ -214,7 +217,58 @@ class AuraReasoning:
             "तुम कैसे हैं",
         ]
 
-        if any(x in low for x in question_starts) and not self._contains_action(low):
+        question_phrases = [
+            "i want to understand",
+            "i'd like to understand",
+            "i would like to understand",
+            "i want to know",
+            "i'd like to know",
+            "i would like to know",
+            "can you explain",
+            "could you explain",
+            "can you tell me",
+            "could you tell me",
+            "help me understand",
+            "tum kya kya kar sakti ho",
+            "aap kya kya kar sakte ho",
+            "aap kya kya kar sakti ho",
+            "tum kya kar sakte ho",
+            "mujhe samjhao",
+            "mujhe samjha do",
+            "simple language mein samjhao",
+            "simple language me samjhao",
+            "simple mein samjhao",
+            "simple me samjhao",
+            "usme kya hai",
+            "isme kya hai",
+            "mein kya hai",
+        ]
+
+        contextual_question = bool(
+            re.search(
+                r"\b(jo|jis|jisme|usme|isme|is file|us file|file)\b.*\b(kya|kaise|kyun|kab|kahan|kaun)\b",
+                low,
+            )
+        )
+
+        past_reference_question = bool(
+            re.search(
+                r"\b(jo|jis|kal jo|pehle jo|abhi jo)\b.*\b(banaya|banayi|banaye|likha|likhi|kiya|ki)\b.*\b(kya|kaise|kyun|kab|kahan|kaun)\b",
+                low,
+            )
+        )
+
+        action_detected = self._contains_action(low)
+        informational_context = contextual_question or past_reference_question
+
+        if (
+            (
+                any(x in low for x in question_starts)
+                or any(x in low for x in question_phrases)
+                or informational_context
+            )
+            and (not action_detected or informational_context)
+        ):
             return {
                 "intent": "QUESTION",
                 "language": language,
@@ -347,6 +401,68 @@ class AuraReasoning:
             }
 
         # -----------------------------
+        # LOCAL LLM SEMANTIC FALLBACK
+        # -----------------------------
+        # Deterministic rules remain authoritative for clear requests.
+        # The local model is consulted only when those rules reach the
+        # generic action fallback. It may classify intent, but it has no
+        # authority to select tools, create plans, or execute anything.
+        llm_result = self._llm_understand(
+            text,
+            conversation_context=conversation_context,
+        )
+
+        if isinstance(llm_result, dict):
+            llm_intent = str(llm_result.get("intent", "")).strip().upper()
+            llm_goal = str(llm_result.get("goal", "")).strip() or text
+            llm_clarification = bool(llm_result.get("clarification_needed", False))
+
+            if llm_intent == "QUESTION":
+                return {
+                    "intent": "QUESTION",
+                    "language": language,
+                    "goal": llm_goal,
+                    "conversation_or_action": "conversation",
+                    "clarification": None,
+                    "plan": [],
+                    "tools": [],
+                    "response": self._question_reply(
+                        text,
+                        language,
+                        conversation_context=conversation_context,
+                    ),
+                }
+
+            if llm_intent == "CONVERSATION":
+                return {
+                    "intent": "CONVERSATION",
+                    "language": language,
+                    "goal": llm_goal,
+                    "conversation_or_action": "conversation",
+                    "clarification": None,
+                    "plan": [],
+                    "tools": [],
+                    "response": self._conversation_reply(text, language),
+                }
+
+            if llm_intent == "CLARIFICATION" or llm_clarification:
+                msg = (
+                    "Aapka request thoda broad hai. Thoda aur detail bataiye."
+                    if language in ("hindi", "hinglish")
+                    else "Your request needs a little more detail before I can act on it."
+                )
+                return {
+                    "intent": "CLARIFICATION",
+                    "language": language,
+                    "goal": llm_goal,
+                    "conversation_or_action": "conversation",
+                    "clarification": msg,
+                    "plan": [],
+                    "tools": [],
+                    "response": msg,
+                }
+
+        # -----------------------------
         # ACTION
         # -----------------------------
 
@@ -363,6 +479,45 @@ class AuraReasoning:
             "background_requested": self._is_background_request(text),
             "response": self._action_reply(text, language, len(plan)),
         }
+
+    def _llm_understand(
+        self,
+        prompt: str,
+        conversation_context: List[Dict[str, Any]] | None = None,
+    ) -> Dict[str, Any] | None:
+        """Use the local model only for semantic understanding.
+
+        The model has no execution authority. Tool selection and execution
+        remain controlled by AURA's deterministic planner and permission layer.
+        """
+        context_lines = []
+        for item in (conversation_context or [])[-6:]:
+            role = str(item.get("role", "")).strip()
+            content = str(item.get("content", "")).strip()
+            if role and content:
+                context_lines.append(f"{role}: {content}")
+
+        context = "\n".join(context_lines)
+        system_prompt = (
+            "You are AURA's local language-understanding layer. "
+            "Understand the user's natural Hindi, Hinglish, or English. "
+            "Do not execute anything. Do not invent tools. Do not create an execution plan. "
+            "Return ONLY valid JSON with exactly these keys: intent, goal, clarification_needed. "
+            "intent must be one of CONVERSATION, QUESTION, CLARIFICATION, ACTION_REQUEST. "
+            "goal must preserve the user's actual requested outcome. "
+            "clarification_needed must be true only when essential information is missing."
+        )
+
+        user_prompt = (
+            f"Conversation context:\n{context}\n\n"
+            f"User request:\n{prompt}"
+        )
+
+        return self.local_llm.structured_chat(
+            system_prompt,
+            user_prompt,
+            temperature=0.1,
+        )
 
     @staticmethod
     def _is_background_request(text: str) -> bool:

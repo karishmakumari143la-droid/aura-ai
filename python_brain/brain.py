@@ -498,10 +498,9 @@ class AuraBrain:
                     conversation_context=memory_context,
                 )
             else:
-                response_text = reasoning_response or self.reasoning.generate_chat_response(
-                    prompt=clean_prompt,
-                    conversation_context=memory_context,
-                    language=language,
+                response_text = reasoning_response or self.reasoning._conversation_reply(
+                    clean_prompt,
+                    language,
                 )
             self.memory.add_conversation_turn(user_id, session_id, "aura", response_text)
 

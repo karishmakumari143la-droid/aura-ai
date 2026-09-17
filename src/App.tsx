@@ -406,6 +406,9 @@ export default function App() {
     setIsVoiceActive(false);
     await fetch('/api/auth/logout', { method: 'POST' }).catch(() => undefined);
     setCurrentUser(null);
+    setShowLanding(true);
+    setIsAuthOpen(false);
+    setActiveTab('aura');
     setMessages([]);
     welcomeShownRef.current = false;
     setOrbState('IDLE');
