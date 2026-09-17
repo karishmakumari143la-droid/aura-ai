@@ -13,7 +13,7 @@ def test_durable_dispatch_runs_asynchronously(tmp_path):
 
     # Use a workspace inside the repository so AURA's existing
     # workspace security policy accepts the execution path.
-    workspace_root = Path("/workspaces/aura-ai/aura_workspace")
+    workspace_root = Path(__file__).resolve().parents[1] / "aura_workspace"
     workspace_root.mkdir(parents=True, exist_ok=True)
 
     manager = BackgroundTaskManager(

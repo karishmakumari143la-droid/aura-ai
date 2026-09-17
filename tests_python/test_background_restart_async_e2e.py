@@ -11,7 +11,7 @@ def test_restart_recovery_then_async_dispatch(tmp_path):
     db_path = str(tmp_path / "restart_async.db")
 
     # Keep execution inside AURA's configured workspace security boundary.
-    workspace_root = Path("/workspaces/aura-ai/aura_workspace")
+    workspace_root = Path(__file__).resolve().parents[1] / "aura_workspace"
     workspace_root.mkdir(parents=True, exist_ok=True)
 
     manager_before = BackgroundTaskManager(db_path=db_path)

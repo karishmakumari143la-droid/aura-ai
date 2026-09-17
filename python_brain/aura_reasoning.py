@@ -403,6 +403,26 @@ class AuraReasoning:
         # -----------------------------
         # LOCAL LLM SEMANTIC FALLBACK
         # -----------------------------
+        # Clear deterministic actions must never be downgraded by the local
+        # language model. The LLM is only a semantic fallback for ambiguous
+        # requests; deterministic intent detection remains authoritative.
+        if action_detected:
+            plan = self.plan_execution_steps(text)
+            return {
+                "intent": "ACTION_REQUEST",
+                "language": language,
+                "goal": text,
+                "conversation_or_action": "action",
+                "clarification": None,
+                "plan": [x["description"] for x in plan],
+                "tools": list(dict.fromkeys(x["tool"] for x in plan)),
+                "background_requested": self._is_background_request(text),
+                "response": self._action_reply(text, language, len(plan)),
+            }
+
+        # -----------------------------
+        # LOCAL LLM SEMANTIC FALLBACK
+        # -----------------------------
         # Deterministic rules remain authoritative for clear requests.
         # The local model is consulted only when those rules reach the
         # generic action fallback. It may classify intent, but it has no
